@@ -25,3 +25,4 @@ Manifest.toml
 
 \?*
 doc/notebook/.ipynb_checkpoints
+*.swp
