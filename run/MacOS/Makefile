@@ -1,5 +1,5 @@
 SIM_TIME := 1000.0
-NX := 200
+NX := 2000
 NZ := 100
 
 DATA_SPEC_COLLISION       := 1

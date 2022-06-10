@@ -62,12 +62,16 @@ const ID_UMOM     = 2
 const ID_WMOM     = 3
 const ID_RHOT     = 4
                     
+const DIR_X       = 1 #Integer constant to express that this operation is in the x-direction
+const DIR_Z       = 2 #Integer constant to express that this operation is in the z-direction
+
 const DATA_SPEC_COLLISION       = 1
 const DATA_SPEC_THERMAL         = 2
 const DATA_SPEC_MOUNTAIN        = 3
 const DATA_SPEC_TURBULENCE      = 4
 const DATA_SPEC_DENSITY_CURRENT = 5
 const DATA_SPEC_INJECTION       = 6
+
 const qpoints     = Array{Float64}([0.112701665379258311482073460022E0 , 0.500000000000000000000000000000E0 , 0.887298334620741688517926539980E0])
 const qweights    = Array{Float64}([0.277777777777777777777777777779E0 , 0.444444444444444444444444444444E0 , 0.277777777777777777777777777779E0])
 
@@ -103,21 +107,22 @@ function main(args::Vector{String})
     output()
 
     # main loop
-    while etime < SIM_TIME
+    elapsedtime = @elapsed while etime < SIM_TIME
 
         if etime + dt > SIM_TIME
             dt = SIM_TIME - etime
         end
 
-        timestep(state, statetmp, flux, tend, dt)
+        timestep!(state, statetmp, flux, tend, dt)
 
         etime = etime + dt
 
     end
-
+    
     mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
 
     if MASTERPROC
+        println( "CPU Time: $elapsedtime")
         @printf("d_mass: %f\n", (mass - mass0)/mass0)
         @printf("d_te:   %f\n", (te - te0)/te0)
     end
@@ -303,15 +308,100 @@ function collision!(x::Float64, z::Float64)
     return r, u, w, t, hr, ht
 end
 
-function timestep(state::OffsetArray{Float64, 3, Array{Float64, 3}},
-                  statetmp::OffsetArray{Float64, 3, Array{Float64, 3}},
-                  flux::Array{Float64, 3},
-                  tend::Array{Float64, 3},
-                  dt::Float64)
+#Performs a single dimensionally split time step using a simple low-storate three-stage Runge-Kutta time integrator
+#The dimensional splitting is a second-order-accurate alternating Strang splitting in which the
+#order of directions is alternated each time step.
+#The Runge-Kutta method used here is defined as follows:
+# q*     = q[n] + dt/3 * rhs(q[n])
+# q**    = q[n] + dt/2 * rhs(q*  )
+# q[n+1] = q[n] + dt/1 * rhs(q** )
+function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                   statetmp::OffsetArray{Float64, 3, Array{Float64, 3}},
+                   flux::Array{Float64, 3},
+                   tend::Array{Float64, 3},
+                   dt::Float64)
     
+    local direction_switch = true
+    
+    if direction_switch
+        
+        #x-direction first
+        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend )
+        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend )
+        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend )
+        
+        #z-direction second
+        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend )
+        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend )
+        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend )
+    else
+        
+        #z-direction second
+        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend )
+        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend )
+        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend )
+        
+        #x-direction first
+        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend )
+        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend )
+        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend )
+    end
 end
 
         
+#Perform a single semi-discretized step in time with the form:
+#state_out = state_init + dt * rhs(state_forcing)
+#Meaning the step starts from state_init, computes the rhs using state_forcing, and stores the result in state_out
+function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3}},
+                   stateforcing::OffsetArray{Float64, 3, Array{Float64, 3}},
+                   stateout::OffsetArray{Float64, 3, Array{Float64, 3}},
+                   dt::Float64,
+                   dir::Int,
+                   flux::Array{Float64, 3},
+                   tend::Array{Float64, 3})
+
+    if dir == DIR_X
+      #Set the halo values for this MPI task's fluid state in the x-direction
+      set_halo_values_x!(stateforcing)
+        
+      #Compute the time tendencies for the fluid state in the x-direction
+      compute_tendencies_x!(stateforcing,flux,tend)
+    elseif dir == DIR_Z
+      #Set the halo values for this MPI task's fluid state in the z-direction
+      set_halo_values_z!(stateforcing)
+        
+      #Compute the time tendencies for the fluid state in the z-direction
+      compute_tendencies_z!(stateforcing,flux,tend)
+    end
+
+    #Apply the tendencies to the fluid state
+    for ll in 1:NUM_VARS
+        for k in 1:NZ
+            for i in 1:NX
+                stateout[i,k,ll] = stateinit[i,k,ll] + dt * tend[i,k,ll]
+            end
+        end
+    end
+end
+
+function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
+        
+end
+
+function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                               flux::Array{Float64, 3},
+                               tend::Array{Float64, 3})                                  
+end
+
+function set_halo_values_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
+    
+end
+        
+function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                               flux::Array{Float64, 3},
+                               tend::Array{Float64, 3})                           
+end
+            
 function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
