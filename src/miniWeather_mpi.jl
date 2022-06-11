@@ -102,6 +102,7 @@ function main(args::Vector{String})
     
     state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell = init!()
 
+    
     mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
 
     output()
@@ -115,12 +116,17 @@ function main(args::Vector{String})
 
         timestep!(state, statetmp, flux, tend, dt)
 
+
         etime = etime + dt
 
     end
     
     mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
-
+                
+    if any(isnan, state)
+        @show "CCC", etime, MYRANK
+    end
+    
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
         @printf("d_mass: %f\n", (mass - mass0)/mass0)
@@ -147,9 +153,9 @@ function init!()
     _statetmp   = Array{Float64}(undef, NX+2*HS, NZ+2*HS, NUM_VARS) 
     statetmp    = OffsetArray(_state, 1-HS:NX+HS, 1-HS:NZ+HS, 1:NUM_VARS)
     
-    flux        = Array{Float64}(undef, NX+1, NZ+1, NUM_VARS) 
-    tend        = Array{Float64}(undef, NX, NZ, NUM_VARS) 
-
+    flux        = zeros(Float64, NX+1, NZ+1, NUM_VARS) 
+    tend        = zeros(Float64, NX, NZ, NUM_VARS) 
+    
     _hy_dens_cell = zeros(Float64, NZ+2*HS) 
     hy_dens_cell  = OffsetArray(_hy_dens_cell, 1-HS:NZ+HS)
     _hy_dens_theta_cell = zeros(Float64, NZ+2*HS) 
@@ -322,6 +328,7 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                    dt::Float64)
     
     local direction_switch = true
+
     
     if direction_switch
         
@@ -346,6 +353,7 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend )
         semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend )
     end
+
 end
 
         
@@ -382,6 +390,7 @@ function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3
             end
         end
     end
+
 end
 
 function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
