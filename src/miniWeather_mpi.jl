@@ -244,7 +244,7 @@ function init!()
       hy_pressure_int[k] = C0*(hr*ht)^GAMMA
     end
                                                                 
-    @bp
+    #@bp
     return state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell
 end
 
