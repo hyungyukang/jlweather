@@ -367,6 +367,8 @@ function sample_ellipse_cosine!(   x::Float64,    z::Float64, amp::Float64,
     else
       val = Float64(0.0)
     end
+    
+    return val
 end
 
 #Performs a single dimensionally split time step using a simple low-storate three-stage Runge-Kutta time integrator
