@@ -40,7 +40,7 @@ const RIGHT_RANK = MYRANK+1 == NRANKS ? 0 : MYRANK + 1
 K_BEG      = 1
 MASTERPROC = (MYRANK == 0)
 
-const HS          = 4
+const HS          = 2
 const NUM_VARS    = 4
 const XLEN        = Float64(2.E4) # Length of the domain in the x-direction (meters)
 const ZLEN        = Float64(1.E4) # Length of the domain in the z-direction (meters)
@@ -50,6 +50,7 @@ const DX          = XLEN / NX_GLOB
 const DZ          = ZLEN / NZ_GLOB
 const DT          = min(DX,DZ) / MAX_SPEED * CFL
 const NQPOINTS    = 3
+const GRAV        = Float64(9.8)
 const CP          = Float64(1004.0) # Specific heat of dry air at constant pressure
 const CV          = Float64(717.0)  # Specific heat of dry air at constant volume
 const RD          = Float64(287.0)  # Dry air constant for equation of state (P=rho*rd*T)
@@ -248,70 +249,124 @@ function init!()
 end
 
 function injection!(x::Float64, z::Float64)
-    r  = Float64(0.0)
-    t  = Float64(1.0)
-    u  = Float64(0.0)
-    w  = Float64(0.0)
-    hr = Float64(2.0)
-    ht = Float64(3.0)
+
+    #Hydrostatic density and potential temperature
+    hr,ht = hydro_const_theta!(z)
+
+    r  = Float64(0.0) # Density
+    t  = Float64(0.0) # Potential temperature
+    u  = Float64(0.0) # Uwind
+    w  = Float64(0.0) # Wwind
     
     return r, u, w, t, hr, ht
 end
 
 function density_current!(x::Float64, z::Float64)
-    r  = Float64(0.0)
-    t  = Float64(1.0)
-    u  = Float64(0.0)
-    w  = Float64(0.0)
-    hr = Float64(2.0)
-    ht = Float64(3.0)
+
+    #Hydrostatic density and potential temperature
+    hr,ht = hydro_const_theta!(z)
+
+    r  = Float64(0.0) # Density
+    t  = Float64(0.0) # Potential temperature
+    u  = Float64(0.0) # Uwind
+    w  = Float64(0.0) # Wwind
     
+    t = t + sample_ellipse_cosine(x,z,-20.0,XLEN/2,5000.0,4000.0,2000.0)
+
     return r, u, w, t, hr, ht
 end
 
 function turbulence!(x::Float64, z::Float64)
-    r  = Float64(0.0)
-    t  = Float64(1.0)
-    u  = Float64(0.0)
-    w  = Float64(0.0)
-    hr = Float64(2.0)
-    ht = Float64(3.0)
+
+    #Hydrostatic density and potential temperature
+    hr,ht = hydro_const_theta!(z)
+
+    r  = Float64(0.0) # Density
+    t  = Float64(0.0) # Potential temperature
+    u  = Float64(0.0) # Uwind
+    w  = Float64(0.0) # Wwind
     
     return r, u, w, t, hr, ht
 end
 
 function mountain_waves!(x::Float64, z::Float64)
-    r  = Float64(0.0)
-    t  = Float64(1.0)
-    u  = Float64(0.0)
-    w  = Float64(0.0)
-    hr = Float64(2.0)
-    ht = Float64(3.0)
+
+    #Hydrostatic density and potential temperature
+    hr,ht = hydro_const_theta!(z)
+
+    r  = Float64(0.0) # Density
+    t  = Float64(0.0) # Potential temperature
+    u  = Float64(0.0) # Uwind
+    w  = Float64(0.0) # Wwind
     
     return r, u, w, t, hr, ht
 end
 
+#Rising thermal
 function thermal!(x::Float64, z::Float64)
-    r  = Float64(0.0)
-    t  = Float64(1.0)
-    u  = Float64(0.0)
-    w  = Float64(0.0)
-    hr = Float64(2.0)
-    ht = Float64(3.0)
+
+    #Hydrostatic density and potential temperature
+    hr,ht = hydro_const_theta!(z)
+
+    r  = Float64(0.0) # Density
+    t  = Float64(0.0) # Potential temperature
+    u  = Float64(0.0) # Uwind
+    w  = Float64(0.0) # Wwind
     
+    t = t + sample_ellipse_cosine!(x,z,3.0,XLEN/2,2000.0,2000.0,2000.0) 
+
     return r, u, w, t, hr, ht
 end
 
+#Colliding thermals
 function collision!(x::Float64, z::Float64)
     
-    r  = Float64(0.0)
-    t  = Float64(1.0)
-    u  = Float64(0.0)
-    w  = Float64(0.0)
-    hr = Float64(2.0)
-    ht = Float64(3.0)
-    
+    #Hydrostatic density and potential temperature
+    hr,ht = hydro_const_theta!(z)
+
+    r  = Float64(0.0) # Density
+    t  = Float64(0.0) # Potential temperature
+    u  = Float64(0.0) # Uwind
+    w  = Float64(0.0) # Wwind
+
+    t = t + sample_ellipse_cosine!(x,z, 20.0,XLEN/2,2000.0,2000.0,2000.0)
+    t = t + sample_ellipse_cosine!(x,z,-20.0,XLEN/2,8000.0,2000.0,2000.0)
+
     return r, u, w, t, hr, ht
+end
+
+#Establish hydrstatic balance using constant potential temperature (thermally neutral atmosphere)
+function hydro_const_theta!(z::Float64)
+
+    r      = Float64(0.0) # Density
+    t      = Float64(0.0) # Potential temperature
+
+    theta0 = Float64(300.0) # Background potential temperature
+    exner0 = Float64(1.0)   # Surface-level Exner pressure
+
+    t      = theta0                            # Potential temperature at z
+    exner  = exner0 - GRAV * z / (CP * theta0) # Exner pressure at z
+    p      = P0 * exner^(CP/RD)                # Pressure at z
+    rt     = (p / C0)^(Float64(1.0)/GAMMA)     # rho*theta at z
+    r      = rt / t                            # Density at z
+
+    return r, t
+end
+
+#Sample from an ellipse of a specified center, radius, and amplitude at a specified location
+function sample_ellipse_cosine!(   x::Float64,    z::Float64, amp::Float64, 
+                                  x0::Float64,   z0::Float64, 
+                                xrad::Float64, zrad::Float64 )
+
+    #Compute distance from bubble center
+    dist = sqrt( ((x-x0)/xrad)^2 + ((z-z0)/zrad)^2 ) * pi / Float64(2.0)
+ 
+    #If the distance from bubble center is less than the radius, create a cos**2 profile
+    if (dist <= pi / Float64(2.0) ) 
+      val = amp * cos(dist)^2
+    else
+      val = Float64(0.0)
+    end
 end
 
 #Performs a single dimensionally split time step using a simple low-storate three-stage Runge-Kutta time integrator
