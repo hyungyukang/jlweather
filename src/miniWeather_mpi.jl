@@ -37,8 +37,8 @@ const LEFT_RANK = MYRANK-1 == -1 ? NRANKS - 1 : MYRANK - 1
 const RIGHT_RANK = MYRANK+1 == NRANKS ? 0 : MYRANK + 1 
 
 #Vertical direction isn't MPI-ized, so the rank's local values = the global values
-K_BEG      = 1
-MASTERPROC = (MYRANK == 0)
+const K_BEG       = 1
+const MASTERPROC  = (MYRANK == 0)
 
 const HS          = 2
 const STEN_SIZE   = 4 #Size of the stencil used for interpolation
@@ -78,17 +78,6 @@ const DATA_SPEC_INJECTION       = 6
 const qpoints     = Array{Float64}([0.112701665379258311482073460022E0 , 0.500000000000000000000000000000E0 , 0.887298334620741688517926539980E0])
 const qweights    = Array{Float64}([0.277777777777777777777777777779E0 , 0.444444444444444444444444444444E0 , 0.277777777777777777777777777779E0])
 
-global _hy_dens_cell       = zeros(Float64, NZ+2*HS) 
-global hy_dens_cell        = OffsetArray(_hy_dens_cell, 1-HS:NZ+HS)
-global _hy_dens_theta_cell = zeros(Float64, NZ+2*HS) 
-global hy_dens_theta_cell  = OffsetArray(_hy_dens_theta_cell, 1-HS:NZ+HS)   
-global hy_dens_int         = Array{Float64}(undef, NZ+1)
-global hy_dens_theta_int   = Array{Float64}(undef, NZ+1)
-global hy_pressure_int     = Array{Float64}(undef, NZ+1)
-global sendbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
-global sendbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)
-global recvbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
-global recvbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)
 
 ##############
 # functions
@@ -116,10 +105,12 @@ function main(args::Vector{String})
     dt = DT
   
     #Initialize the grid and the data  
-    state, statetmp, flux, tend = init!()
+    (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
+            sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
     #Initial reductions for mass, kinetic energy, and total energy
-    mass0, te0 = reductions(state)
+    mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
 
     #Output the initial state
     output()
@@ -133,7 +124,9 @@ function main(args::Vector{String})
         end
 
         #Perform a single time step
-        timestep!(state, statetmp, flux, tend, dt)
+        timestep!(state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
+                  sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+                  hy_dens_int, hy_dens_theta_int, hy_pressure_int)
 
         #Update the elapsed time and output counter
         etime = etime + dt
@@ -142,11 +135,8 @@ function main(args::Vector{String})
         #@printf("%.14f     %.14f     %.14f \n",etime,minimum(state),maximum(state))
     end
     
-    mass, te = reductions(state)
-                
-    if any(isnan, state)
-        @show "CCC", etime, MYRANK
-    end
+    mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
+
     
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
@@ -177,7 +167,19 @@ function init!()
     
     flux        = zeros(Float64, NX+1, NZ+1, NUM_VARS) 
     tend        = zeros(Float64, NX, NZ, NUM_VARS) 
-    
+ 
+    _hy_dens_cell       = zeros(Float64, NZ+2*HS) 
+    hy_dens_cell        = OffsetArray(_hy_dens_cell, 1-HS:NZ+HS)
+    _hy_dens_theta_cell = zeros(Float64, NZ+2*HS) 
+    hy_dens_theta_cell  = OffsetArray(_hy_dens_theta_cell, 1-HS:NZ+HS)   
+        
+    hy_dens_int         = Array{Float64}(undef, NZ+1)
+    hy_dens_theta_int   = Array{Float64}(undef, NZ+1)
+    hy_pressure_int     = Array{Float64}(undef, NZ+1)
+    sendbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
+    sendbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)
+    recvbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
+    recvbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)   
     
     #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     #! Initialize the cell-averaged fluid state via Gauss-Legendre quadrature
@@ -253,7 +255,23 @@ function init!()
     end
                                                                 
     #@bp
-    return state, statetmp, flux, tend
+     
+    _hy_dens_cell       = zeros(Float64, NZ+2*HS) 
+    hy_dens_cell        = OffsetArray(_hy_dens_cell, 1-HS:NZ+HS)
+    _hy_dens_theta_cell = zeros(Float64, NZ+2*HS) 
+    hy_dens_theta_cell  = OffsetArray(_hy_dens_theta_cell, 1-HS:NZ+HS)   
+    
+    hy_dens_int         = Array{Float64}(undef, NZ+1)
+    hy_dens_theta_int   = Array{Float64}(undef, NZ+1)
+    hy_pressure_int     = Array{Float64}(undef, NZ+1)
+    sendbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
+    sendbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)
+    recvbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
+    recvbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)   
+    
+    return (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
+            sendbuf_r, recvbuf_l, recvbuf_r)
 end
 
 function injection!(x::Float64, z::Float64)
@@ -390,32 +408,65 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                    statetmp::OffsetArray{Float64, 3, Array{Float64, 3}},
                    flux::Array{Float64, 3},
                    tend::Array{Float64, 3},
-                   dt::Float64)
+                   dt::Float64,
+                   recvbuf_l::Array{Float64, 3},
+                   recvbuf_r::Array{Float64, 3},
+                   sendbuf_l::Array{Float64, 3},
+                   sendbuf_r::Array{Float64, 3},
+                   hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                   hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}},
+                   hy_dens_int::Vector{Float64},
+                   hy_dens_theta_int::Vector{Float64},
+                   hy_pressure_int::Vector{Float64})
     
     local direction_switch = true
     
     if direction_switch
         
         #x-direction first
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend )
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend )
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend )
+        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         #z-direction second
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend )
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend )
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend )
+        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
     else
         
         #z-direction second
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend )
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend )
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend )
+        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
         #x-direction first
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend )
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend )
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend )
+        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
+            recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
     end
 
 end
@@ -425,26 +476,37 @@ end
 #state_out = state_init + dt * rhs(state_forcing)
 #Meaning the step starts from state_init, computes the rhs using state_forcing, and stores the result in state_out
 function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3}},
-                             stateforcing::OffsetArray{Float64, 3, Array{Float64, 3}},
-                             stateout::OffsetArray{Float64, 3, Array{Float64, 3}},
-                             dt::Float64,
-                             dir::Int,
-                             flux::Array{Float64, 3},
-                             tend::Array{Float64, 3})
-
+                    stateforcing::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    stateout::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    dt::Float64,
+                    dir::Int,
+                    flux::Array{Float64, 3},
+                    tend::Array{Float64, 3},
+                    recvbuf_l::Array{Float64, 3},
+                    recvbuf_r::Array{Float64, 3},
+                    sendbuf_l::Array{Float64, 3},
+                    sendbuf_r::Array{Float64, 3},
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_int::Vector{Float64},
+                    hy_dens_theta_int::Vector{Float64},
+                    hy_pressure_int::Vector{Float64})
+    
     if dir == DIR_X
       #Set the halo values for this MPI task's fluid state in the x-direction
-      set_halo_values_x!(stateforcing)
+      set_halo_values_x!(stateforcing, recvbuf_l, recvbuf_r, sendbuf_l,
+                         sendbuf_r, hy_dens_cell, hy_dens_theta_cell)
 
       #Compute the time tendencies for the fluid state in the x-direction
-      compute_tendencies_x!(stateforcing,flux,tend,dt)
+      compute_tendencies_x!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell)
 
     elseif dir == DIR_Z
       #Set the halo values for this MPI task's fluid state in the z-direction
-      set_halo_values_z!(stateforcing)
+      set_halo_values_z!(stateforcing, hy_dens_cell, hy_dens_theta_cell)
         
       #Compute the time tendencies for the fluid state in the z-direction
-      compute_tendencies_z!(stateforcing,flux,tend,dt)
+      compute_tendencies_z!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
+                            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
 
     end
 
@@ -460,7 +522,13 @@ function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3
 end
 
 #Set this MPI task's halo values in the x-direction. This routine will require MPI
-function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
+function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    recvbuf_l::Array{Float64, 3},
+                    recvbuf_r::Array{Float64, 3},
+                    sendbuf_l::Array{Float64, 3},
+                    sendbuf_r::Array{Float64, 3},
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
 
 
     req_r = Vector{MPI.Request}(undef, 2)
@@ -515,9 +583,11 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
 end
 
 function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
-                               flux::Array{Float64, 3},
-                               tend::Array{Float64, 3},
-                               dt::Float64)
+                    flux::Array{Float64, 3},
+                    tend::Array{Float64, 3},
+                    dt::Float64,
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
 
     stencil = Array{Float64}(undef, STEN_SIZE)
     d3_vals = Array{Float64}(undef, NUM_VARS)
@@ -566,7 +636,9 @@ end
 
 #Set this MPI task's halo values in the z-direction. This does not require MPI because there is no MPI
 #decomposition in the vertical direction
-function set_halo_values_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
+function set_halo_values_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
     
     for ll in 1:NUM_VARS
         for i in 1-HS:NX+HS
@@ -592,10 +664,15 @@ function set_halo_values_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
 end
         
 function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
-                               flux::Array{Float64, 3},
-                               tend::Array{Float64, 3},
-                               dt::Float64)
-
+                    flux::Array{Float64, 3},
+                    tend::Array{Float64, 3},
+                    dt::Float64,
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_int::Vector{Float64},
+                    hy_dens_theta_int::Vector{Float64},
+                    hy_pressure_int::Vector{Float64})
+    
     stencil = Array{Float64}(undef, STEN_SIZE)
     d3_vals = Array{Float64}(undef, NUM_VARS)
     vals    = Array{Float64}(undef, NUM_VARS)
@@ -652,7 +729,9 @@ function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
 
 end
             
-function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}})
+function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
     
     mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
