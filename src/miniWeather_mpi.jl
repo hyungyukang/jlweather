@@ -115,6 +115,7 @@ function main(args::Vector{String})
     #Output the initial state
     output()
 
+    
     # main loop
     elapsedtime = @elapsed while etime < SIM_TIME
 
@@ -134,9 +135,8 @@ function main(args::Vector{String})
         #println('  ',etime,'   ',minimum(state),'   ',maximum(state))
         #@printf("%.14f     %.14f     %.14f \n",etime,minimum(state),maximum(state))
     end
-    
-    mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
 
+    mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
     
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
@@ -172,10 +172,11 @@ function init!()
     hy_dens_cell        = OffsetArray(_hy_dens_cell, 1-HS:NZ+HS)
     _hy_dens_theta_cell = zeros(Float64, NZ+2*HS) 
     hy_dens_theta_cell  = OffsetArray(_hy_dens_theta_cell, 1-HS:NZ+HS)   
-        
+    
     hy_dens_int         = Array{Float64}(undef, NZ+1)
     hy_dens_theta_int   = Array{Float64}(undef, NZ+1)
-    hy_pressure_int     = Array{Float64}(undef, NZ+1)
+    hy_pressure_int     = Array{Float64}(undef, NZ+1)   
+    
     sendbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
     sendbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)
     recvbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
@@ -253,21 +254,6 @@ function init!()
       hy_dens_theta_int[k] = hr*ht
       hy_pressure_int[k] = C0*(hr*ht)^GAMMA
     end
-                                                                
-    #@bp
-     
-    _hy_dens_cell       = zeros(Float64, NZ+2*HS) 
-    hy_dens_cell        = OffsetArray(_hy_dens_cell, 1-HS:NZ+HS)
-    _hy_dens_theta_cell = zeros(Float64, NZ+2*HS) 
-    hy_dens_theta_cell  = OffsetArray(_hy_dens_theta_cell, 1-HS:NZ+HS)   
-    
-    hy_dens_int         = Array{Float64}(undef, NZ+1)
-    hy_dens_theta_int   = Array{Float64}(undef, NZ+1)
-    hy_pressure_int     = Array{Float64}(undef, NZ+1)
-    sendbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
-    sendbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)
-    recvbuf_l = Array{Float64}(undef, HS, NZ, NUM_VARS)
-    recvbuf_r = Array{Float64}(undef, HS, NZ, NUM_VARS)   
     
     return (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
@@ -427,6 +413,8 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+
+        
         semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
@@ -491,25 +479,27 @@ function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3
                     hy_dens_int::Vector{Float64},
                     hy_dens_theta_int::Vector{Float64},
                     hy_pressure_int::Vector{Float64})
-    
+
     if dir == DIR_X
-      #Set the halo values for this MPI task's fluid state in the x-direction
-      set_halo_values_x!(stateforcing, recvbuf_l, recvbuf_r, sendbuf_l,
-                         sendbuf_r, hy_dens_cell, hy_dens_theta_cell)
+        #Set the halo values for this MPI task's fluid state in the x-direction
+        set_halo_values_x!(stateforcing, recvbuf_l, recvbuf_r, sendbuf_l,
+                           sendbuf_r, hy_dens_cell, hy_dens_theta_cell)
 
-      #Compute the time tendencies for the fluid state in the x-direction
-      compute_tendencies_x!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell)
+        #Compute the time tendencies for the fluid state in the x-direction
+        compute_tendencies_x!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell)
 
-    elseif dir == DIR_Z
-      #Set the halo values for this MPI task's fluid state in the z-direction
-      set_halo_values_z!(stateforcing, hy_dens_cell, hy_dens_theta_cell)
         
-      #Compute the time tendencies for the fluid state in the z-direction
-      compute_tendencies_z!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
+    elseif dir == DIR_Z
+        #Set the halo values for this MPI task's fluid state in the z-direction
+        set_halo_values_z!(stateforcing, hy_dens_cell, hy_dens_theta_cell)
+        
+        #Compute the time tendencies for the fluid state in the z-direction
+        compute_tendencies_z!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
                             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
 
+        
     end
-
+    
     #Apply the tendencies to the fluid state
     for ll in 1:NUM_VARS
         for k in 1:NZ
@@ -534,6 +524,7 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     req_r = Vector{MPI.Request}(undef, 2)
     req_s = Vector{MPI.Request}(undef, 2)
 
+    
     #Prepost receives
     req_r[1] = MPI.Irecv!(recvbuf_l, LEFT_RANK,0,COMM)
     req_r[2] = MPI.Irecv!(recvbuf_r,RIGHT_RANK,1,COMM)
@@ -567,7 +558,7 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
 
     #Wait for sends to finish
     statuses = MPI.Waitall!(req_s)
-
+    
     if (DATA_SPEC == DATA_SPEC_INJECTION)
        if (MYRANK == 0)
           for k in 1:NZ
@@ -579,7 +570,7 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
           end
        end
     end
-
+ 
 end
 
 function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
@@ -592,12 +583,12 @@ function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
     stencil = Array{Float64}(undef, STEN_SIZE)
     d3_vals = Array{Float64}(undef, NUM_VARS)
     vals    = Array{Float64}(undef, NUM_VARS)
- 
+    
     #Compute the hyperviscosity coeficient
     hv_coef = -HV_BETA * DX / (16*dt)
- 
+    
     for k in 1:NZ
-        for i in 1:NX+1
+        for i in 1:(NX+1)
             #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
             for ll in 1:NUM_VARS
                 for s in 1:STEN_SIZE
@@ -609,6 +600,7 @@ function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
                 d3_vals[ll] = -stencil[1] + 3*stencil[2] - 3*stencil[3] + stencil[4]
             end # ll
  
+
             #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
             r = vals[ID_DENS] + hy_dens_cell[k]
             u = vals[ID_UMOM] / r
@@ -623,7 +615,7 @@ function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
             flux[i,k,ID_RHOT] = r*u*t   - hv_coef*d3_vals[ID_RHOT]
         end # i
     end # k
-
+    
     for ll in 1:NUM_VARS
         for k in 1:NZ
             for i in 1:NX
