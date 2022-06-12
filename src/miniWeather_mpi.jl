@@ -101,8 +101,8 @@ function main(args::Vector{String})
 
     #@show(args)
     
-    etime = Float64(0.0)
-    dt = DT
+    local etime = Float64(0.0)
+    local dt = DT
   
     #Initialize the grid and the data  
     (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
@@ -110,7 +110,7 @@ function main(args::Vector{String})
             sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
     #Initial reductions for mass, kinetic energy, and total energy
-    mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
+    local mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
 
     #Output the initial state
     output()
@@ -136,7 +136,7 @@ function main(args::Vector{String})
         #@printf("%.14f     %.14f     %.14f \n",etime,minimum(state),maximum(state))
     end
 
-    mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
+    local mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
     
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
@@ -371,7 +371,7 @@ function sample_ellipse_cosine!(   x::Float64,    z::Float64, amp::Float64,
                                 xrad::Float64, zrad::Float64 )
 
     #Compute distance from bubble center
-    dist = sqrt( ((x-x0)/xrad)^2 + ((z-z0)/zrad)^2 ) * pi / Float64(2.0)
+    local dist = sqrt( ((x-x0)/xrad)^2 + ((z-z0)/zrad)^2 ) * pi / Float64(2.0)
  
     #If the distance from bubble center is less than the radius, create a cos**2 profile
     if (dist <= pi / Float64(2.0) ) 
@@ -413,21 +413,24 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
-
         
         semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        
         semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        
         #z-direction second
         semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        
         semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        
         semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
@@ -438,9 +441,11 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        
         semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        
         semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
@@ -449,9 +454,11 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        
         semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        
         semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
@@ -521,8 +528,8 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
 
 
-    req_r = Vector{MPI.Request}(undef, 2)
-    req_s = Vector{MPI.Request}(undef, 2)
+    local req_r = Vector{MPI.Request}(undef, 2)
+    local req_s = Vector{MPI.Request}(undef, 2)
 
     
     #Prepost receives
@@ -544,7 +551,7 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     req_s[2] = MPI.Isend(sendbuf_r,RIGHT_RANK,0,COMM)
 
     #Wait for receives to finish
-    statuses = MPI.Waitall!(req_r)
+    local statuses = MPI.Waitall!(req_r)
 
     #Unpack the receive buffers
     for ll in 1:NUM_VARS
@@ -557,7 +564,7 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     end
 
     #Wait for sends to finish
-    statuses = MPI.Waitall!(req_s)
+    local statuses = MPI.Waitall!(req_s)
     
     if (DATA_SPEC == DATA_SPEC_INJECTION)
        if (MYRANK == 0)
@@ -580,12 +587,13 @@ function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
                     hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
 
-    stencil = Array{Float64}(undef, STEN_SIZE)
-    d3_vals = Array{Float64}(undef, NUM_VARS)
-    vals    = Array{Float64}(undef, NUM_VARS)
+    local stencil = Array{Float64}(undef, STEN_SIZE)
+    local d3_vals = Array{Float64}(undef, NUM_VARS)
+    local vals    = Array{Float64}(undef, NUM_VARS)
+    local (r, u, w, t, p) = [zero(Float64) for _ in 1:5]
     
     #Compute the hyperviscosity coeficient
-    hv_coef = -HV_BETA * DX / (16*dt)
+    local hv_coef = -HV_BETA * DX / (16*dt)
     
     for k in 1:NZ
         for i in 1:(NX+1)
@@ -665,12 +673,13 @@ function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
                     hy_dens_theta_int::Vector{Float64},
                     hy_pressure_int::Vector{Float64})
     
-    stencil = Array{Float64}(undef, STEN_SIZE)
-    d3_vals = Array{Float64}(undef, NUM_VARS)
-    vals    = Array{Float64}(undef, NUM_VARS)
+    local stencil = Array{Float64}(undef, STEN_SIZE)
+    local d3_vals = Array{Float64}(undef, NUM_VARS)
+    local vals    = Array{Float64}(undef, NUM_VARS)
+    local (r, u, w, t, p) = [zero(Float64) for _ in 1:5]
  
     #Compute the hyperviscosity coeficient
-    hv_coef = -HV_BETA * DZ / (16*dt)
+    local hv_coef = -HV_BETA * DZ / (16*dt)
 
     #Compute fluxes in the x-direction for each cell
     for k in 1:NZ+1
@@ -725,7 +734,7 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
     
-    mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
+    local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
     
     for k in 1:NZ
