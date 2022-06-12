@@ -1,6 +1,6 @@
-SIM_TIME := 100.0
-NX := 200
-NZ := 100
+SIM_TIME := 400.0
+NX := 100 
+NZ := 50
 
 DATA_SPEC_COLLISION       := 1
 DATA_SPEC_THERMAL         := 2
@@ -9,7 +9,8 @@ DATA_SPEC_TURBULENCE      := 4
 DATA_SPEC_DENSITY_CURRENT := 5
 DATA_SPEC_INJECTION       := 6
 
-DATA := ${DATA_SPEC_COLLISION}
+#DATA := ${DATA_SPEC_COLLISION}
+DATA := ${DATA_SPEC_THERMAL}
 
 JULIA := julia
 SRC := ../../src/miniWeather_mpi.jl
