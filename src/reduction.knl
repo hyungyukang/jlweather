@@ -1,0 +1,34 @@
+# Compute reduced quantities for error checking without resorting to the "ncdiff" tool
+#[Fortran: glob, mass, te, nz, nx, state, hy_dens_cell, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, C0, gamma, p0, rd, cp, cv, dx, dz]
+#
+#    integer :: i, k, ierr
+#    real(rp) :: r,u,w,th,p,t,ke,ie
+#    mass = 0
+#    te   = 0
+#    !$acc parallel loop collapse(2) reduction(+:mass,te)
+#    do k = 1 , nz
+#      do i = 1 , nx
+#        r  =   state(i,k,ID_DENS) + hy_dens_cell(k)             ! Density
+#        u  =   state(i,k,ID_UMOM) / r                           ! U-wind
+#        w  =   state(i,k,ID_WMOM) / r                           ! W-wind
+#        th = ( state(i,k,ID_RHOT) + hy_dens_theta_cell(k) ) / r ! Potential Temperature (theta)
+#        p  = C0*(r*th)**gamma      ! Pressure
+#        t  = th / (p0/p)**(rd/cp)  ! Temperature
+#        ke = r*(u*u+w*w)           ! Kinetic Energy
+#        ie = r*cv*t                ! Internal Energy
+#        mass = mass + r            *dx*dz ! Accumulate domain mass
+#        te   = te   + (ke + r*cv*t)*dx*dz ! Accumulate domain total energy
+#      enddo
+#    enddo
+#    call mpi_allreduce((/mass,te/),glob,2,MPI_REAL8,MPI_SUM,MPI_COMM_WORLD,ierr)
+#    mass = glob(1)
+#    te   = glob(2)
+
+[fortran]
+
+INTEGER (C_INT64_T) FUNCTION runkernel() BIND(C, name="runkernel")
+	USE, INTRINSIC :: ISO_C_BINDING
+
+	print *, "Hello World!"
+
+END FUNCTION

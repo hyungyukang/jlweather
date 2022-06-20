@@ -1,8 +1,36 @@
-using OffsetArrays
-using Match
-using MPI
-using Debugger
-using Printf
+
+include("./jai.jl")
+using  .AcceleratorInterface
+
+import OffsetArrays.OffsetArray,
+       OffsetArrays.OffsetVector
+
+import Match.@match
+
+import MPI.Init,
+       MPI.COMM_WORLD,
+       MPI.Comm_rank,
+       MPI.Comm_size,
+       MPI.Allreduce!,
+       MPI.Barrier,
+       MPI.Waitall!,
+       MPI.Request,
+       MPI.Irecv!,
+       MPI.Isend
+
+import Debugger
+
+import Printf.@printf
+
+import Libdl
+
+##############
+# Accelerators
+##############
+
+const PATH_DATALIB = joinpath(@__DIR__, "dlib.so") 
+const PATH_KERNELLIB = joinpath(@__DIR__, "klib.so") 
+const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl") 
 
 ##############
 # constants
@@ -10,10 +38,10 @@ using Printf
     
 # julia command to link MPI.jl to system MPI installation
 # julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/Users/8yk/opt/usr/local"; using Pkg; Pkg.build("MPI"; verbose=true)'
-MPI.Init()
-const COMM   = MPI.COMM_WORLD
-const NRANKS = MPI.Comm_size(COMM)
-const MYRANK = MPI.Comm_rank(COMM)
+Init()
+const COMM   = COMM_WORLD
+const NRANKS = Comm_size(COMM)
+const MYRANK = Comm_rank(COMM)
 
 if length(ARGS) >= 4
     const SIM_TIME    = parse(Float64, ARGS[1])
@@ -158,7 +186,7 @@ function init!()
         
     #println("nx, nz at $MYRANK: $NX($I_BEG:$I_END) $NZ($K_BEG:$NZ)")
     
-    MPI.Barrier(COMM)
+    Barrier(COMM)
     
     _state      = zeros(Float64, NX+2*HS, NZ+2*HS, NUM_VARS) 
     state       = OffsetArray(_state, 1-HS:NX+HS, 1-HS:NZ+HS, 1:NUM_VARS)
@@ -528,13 +556,13 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
 
 
-    local req_r = Vector{MPI.Request}(undef, 2)
-    local req_s = Vector{MPI.Request}(undef, 2)
+    local req_r = Vector{Request}(undef, 2)
+    local req_s = Vector{Request}(undef, 2)
 
     
     #Prepost receives
-    req_r[1] = MPI.Irecv!(recvbuf_l, LEFT_RANK,0,COMM)
-    req_r[2] = MPI.Irecv!(recvbuf_r,RIGHT_RANK,1,COMM)
+    req_r[1] = Irecv!(recvbuf_l, LEFT_RANK,0,COMM)
+    req_r[2] = Irecv!(recvbuf_r,RIGHT_RANK,1,COMM)
 
     #Pack the send buffers
     for ll in 1:NUM_VARS
@@ -547,11 +575,11 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     end
 
     #Fire off the sends
-    req_s[1] = MPI.Isend(sendbuf_l, LEFT_RANK,1,COMM)
-    req_s[2] = MPI.Isend(sendbuf_r,RIGHT_RANK,0,COMM)
+    req_s[1] = Isend(sendbuf_l, LEFT_RANK,1,COMM)
+    req_s[2] = Isend(sendbuf_r,RIGHT_RANK,0,COMM)
 
     #Wait for receives to finish
-    local statuses = MPI.Waitall!(req_r)
+    local statuses = Waitall!(req_r)
 
     #Unpack the receive buffers
     for ll in 1:NUM_VARS
@@ -564,7 +592,7 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     end
 
     #Wait for sends to finish
-    local statuses = MPI.Waitall!(req_s)
+    local statuses = Waitall!(req_s)
     
     if (DATA_SPEC == DATA_SPEC_INJECTION)
        if (MYRANK == 0)
@@ -737,6 +765,26 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
     
+    accel  = AccelInfo()
+    kernel = KernelInfo(accel, PATH_REDUCTION_KERNEL)
+    
+    copyto(accel, state)
+    
+    #[Fortran: glob, mass, te, nz, nx, state, hy_dens_cell, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, C0, gamma, p0, rd, cp, cv, dx, dz]
+    launch(kernel, state)
+
+    copyfrom(accel, state)
+      
+    #call mpi_allreduce((/mass,te/),glob,2,MPI_REAL8,MPI_SUM,MPI_COMM_WORLD,ierr)
+    #mass = glob(1)
+    #te   = glob(2)      
+    
+#    acc = Accel(**data, vendor=vendor, accel=accel, lang=lang, recompile=False, _debug=DEBUG)
+    
+#    acc.launch(Kernel(knl), *args, environ=attr)
+
+#    acc.stop()
+    
     for k in 1:NZ
         for i in 1:NX
             r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
@@ -752,7 +800,7 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         end
     end
     
-    MPI.Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
+    Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
     
     return glob
 end

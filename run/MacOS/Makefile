@@ -12,13 +12,35 @@ DATA_SPEC_INJECTION       := 6
 #DATA := ${DATA_SPEC_COLLISION}
 DATA := ${DATA_SPEC_THERMAL}
 
-JULIA := julia
-SRC := ../../src/miniWeather_mpi.jl
+JULIA := julia -g 2
+
+SRCDIR := ../../src
+JLSRC  := ${SRCDIR}/miniWeather_mpi.jl
 ARGS := ${SIM_TIME} ${NX} ${NZ} ${DATA}
 
+CXX := g++
+FC  := gfortran
+
+CXXFLAGS := -shared -fPIC
+
+DATASRC := ${SRCDIR}/data.cpp
+KERNELSRC := ${SRCDIR}/kernel.cpp
+
 run:
-	${JULIA} --color=yes -O -- ${SRC} ${ARGS}
+	${JULIA} --color=yes -O -- ${JLSRC} ${ARGS}
+
+slib: dlib.so klib.so
+
+dlib.so: ${DATASRC}
+	${CXX} ${CXXFLAGS} -o $@ $<
+	mv $@ ${SRCDIR}
+
+klib.so: ${KERNELSRC}
+	${CXX} ${CXXFLAGS} -o $@ $<
+	mv $@ ${SRCDIR}
 
 debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}
 
+clean:
+	rm -f *.so
