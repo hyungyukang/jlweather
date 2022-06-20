@@ -3,6 +3,8 @@ using Match
 using MPI
 using Debugger
 using Printf
+#using NetCDF
+using NCDatasets
 
 ##############
 # constants
@@ -15,15 +17,17 @@ const COMM   = MPI.COMM_WORLD
 const NRANKS = MPI.Comm_size(COMM)
 const MYRANK = MPI.Comm_rank(COMM)
 
-if length(ARGS) >= 4
+if length(ARGS) >= 5
     const SIM_TIME    = parse(Float64, ARGS[1])
     const NX_GLOB     = parse(Int64, ARGS[2])
     const NZ_GLOB     = parse(Int64, ARGS[3])
-    const DATA_SPEC   = parse(Int64, ARGS[4])
+    const OUT_FREQ    = parse(Float64, ARGS[4])
+    const DATA_SPEC   = parse(Int64, ARGS[5])
 else
     const SIM_TIME    = Float64(100.0)
     const NX_GLOB     = Int64(200)
     const NZ_GLOB     = Int64(100)
+    const OUT_FREQ    = Float64(100.0)
     const DATA_SPEC   = Int64(1)
 end
     
@@ -102,7 +106,10 @@ function main(args::Vector{String})
     #@show(args)
     
     local etime = Float64(0.0)
+    local output_counter = Float64(0.0)
     local dt = DT
+    local nt = Int(1)
+
   
     #Initialize the grid and the data  
     (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
@@ -112,8 +119,10 @@ function main(args::Vector{String})
     #Initial reductions for mass, kinetic energy, and total energy
     local mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
 
+    #println(state[:,:,ID_DENS])
+
     #Output the initial state
-    output()
+    output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
 
     
     # main loop
@@ -131,9 +140,16 @@ function main(args::Vector{String})
 
         #Update the elapsed time and output counter
         etime = etime + dt
+        output_counter = output_counter + dt
 
-        #println('  ',etime,'   ',minimum(state),'   ',maximum(state))
-        #@printf("%.14f     %.14f     %.14f \n",etime,minimum(state),maximum(state))
+        #If it's time for output, reset the counter, and do output
+        if (output_counter >= OUT_FREQ)
+          #Increment the number of outputs
+          nt = nt + 1
+          output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
+          output_counter = output_counter - OUT_FREQ
+        end
+
     end
 
     local mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
@@ -757,8 +773,88 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     return glob
 end
 
-function output()
-    
+#Output the fluid state (state) to a NetCDF file at a given elapsed model time (etime)
+function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                etime::Float64,
+                nt::Int,
+                hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
+
+    var_local  = zeros(Float64, NX, NZ, NUM_VARS)
+
+    if MASTERPROC
+       var_global  = zeros(Float64, NX_GLOB, NZ_GLOB, NUM_VARS)
+    end
+
+    #Store perturbed values in the temp arrays for output
+    for k in 1:NZ
+        for i in 1:NX
+            var_local[i,k,ID_DENS]  = state[i,k,ID_DENS]
+            var_local[i,k,ID_UMOM]  = state[i,k,ID_UMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+            var_local[i,k,ID_WMOM]  = state[i,k,ID_WMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+            var_local[i,k,ID_RHOT] = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+                         - hy_dens_theta_cell[k] / hy_dens_cell[k]
+        end
+    end
+
+   #Gather data from multiple CPUs
+    for ll in 1:NUM_VARS
+        if MASTERPROC
+           var_global[I_BEG:I_END,:,ll] = var_local[:,:,ll]
+        else
+           MPI.Gather!(var_local[:,:,ll],var_global[I_BEG:I_END,:,ll],MASTERPROC,COMM)
+        end
+    end
+
+
+    # Write output only in MASTER
+    if MASTERPROC
+
+       #If the elapsed time is zero, create the file. Otherwise, open the file
+       if ( etime == 0.0 )
+
+          # Open NetCDF output file with a create mode
+          ds = Dataset("output.nc","c")
+
+          defDim(ds,"t",Inf)
+          defDim(ds,"x",NX_GLOB)
+          defDim(ds,"z",NZ_GLOB)
+
+          nc_var = defVar(ds,"t",Float64,("t",))
+          nc_var[nt] = etime
+          nc_var = defVar(ds,"dens",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_DENS]
+          nc_var = defVar(ds,"uwnd",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
+          nc_var = defVar(ds,"wwnd",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
+          nc_var = defVar(ds,"theta",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+
+          # Close NetCDF file
+          close(ds)
+
+       else
+
+          # Open NetCDF output file with an append mode
+          ds = Dataset("output.nc","a")
+
+          nc_var = ds["t"]
+          nc_var[nt] = etime
+          nc_var = ds["dens"]
+          nc_var[:,:,nt] = var_global[:,:,ID_DENS]
+          nc_var = ds["uwnd"]
+          nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
+          nc_var = ds["wwnd"]
+          nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
+          nc_var = ds["theta"]
+          nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+
+          # Close NetCDF file
+          close(ds)
+
+       end # etime
+    end # MASTER
 end
 
 function finalize!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
