@@ -5,6 +5,10 @@ using  .AcceleratorInterface
 import OffsetArrays.OffsetArray,
        OffsetArrays.OffsetVector
 
+import ArgParse.ArgParseSettings,
+       ArgParse.parse_args,
+       ArgParse.@add_arg_table!
+
 import Match.@match
 
 import MPI.Init,
@@ -37,27 +41,58 @@ const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl")
 ##############
     
 # julia command to link MPI.jl to system MPI installation
-# julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/Users/8yk/opt/usr/local"; using Pkg; Pkg.build("MPI"; verbose=true)'
 # julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/opt/cray/pe/mpich/8.1.16/ofi/crayclang/10.0"; using Pkg; Pkg.build("MPI"; verbose=true)'
 # MPI.install_mpiexecjl()
+
 Init()
 const COMM   = COMM_WORLD
 const NRANKS = Comm_size(COMM)
 const MYRANK = Comm_rank(COMM)
 
-if length(ARGS) >= 5
-    const SIM_TIME    = parse(Float64, ARGS[1])
-    const NX_GLOB     = parse(Int64, ARGS[2])
-    const NZ_GLOB     = parse(Int64, ARGS[3])
-    const OUT_FREQ    = parse(Float64, ARGS[4])
-    const DATA_SPEC   = parse(Int64, ARGS[5])
-else
-    const SIM_TIME    = Float64(100.0)
-    const NX_GLOB     = Int64(200)
-    const NZ_GLOB     = Int64(100)
-    const OUT_FREQ    = Float64(100.0)
-    const DATA_SPEC   = Int64(1)
+s = ArgParseSettings()
+@add_arg_table! s begin
+    "--simtime", "-s"
+        help = "simulation time"
+        arg_type = Float64
+        default = 400.0
+    "--nx", "-x"
+        help = "x-dimension"
+        arg_type = Int64
+        default = 100
+    "--nz", "-z"
+        help = "z-dimension"
+        arg_type = Int64
+        default = 50
+    "--outfreq", "-f"
+        help = "output frequency in time"
+        arg_type = Float64
+        default = 400.0
+    "--dataspec", "-d"
+        help = "data spec"
+        default = 2
 end
+
+parsed_args = parse_args(ARGS, s)
+
+const SIM_TIME    = parsed_args["simtime"]
+const NX_GLOB     = parsed_args["nx"]
+const NZ_GLOB     = parsed_args["nz"]
+const OUT_FREQ    = parsed_args["outfreq"]
+const DATA_SPEC   = parsed_args["dataspec"]
+
+#if length(ARGS) >= 5
+#    const SIM_TIME    = parse(Float64, ARGS[1])
+#    const NX_GLOB     = parse(Int64, ARGS[2])
+#    const NZ_GLOB     = parse(Int64, ARGS[3])
+#    const OUT_FREQ    = parse(Float64, ARGS[4])
+#    const DATA_SPEC   = parse(Int64, ARGS[5])
+#else
+#    const SIM_TIME    = Float64(100.0)
+#    const NX_GLOB     = Int64(200)
+#    const NZ_GLOB     = Int64(100)
+#    const OUT_FREQ    = Float64(100.0)
+#    const DATA_SPEC   = Int64(1)
+#end
     
 const NPER  = Float64(NX_GLOB)/NRANKS
 const I_BEG = trunc(Int, round(NPER* MYRANK)+1)

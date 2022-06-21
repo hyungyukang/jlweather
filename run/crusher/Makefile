@@ -17,7 +17,8 @@ DATA := ${DATA_SPEC_THERMAL}
 
 JULIA := julia --project=.
 SRC := ../../src/miniWeather_mpi.jl
-ARGS := ${SIM_TIME} ${NX} ${NZ} ${OUT_FREQ} ${DATA}
+#ARGS := ${SIM_TIME} ${NX} ${NZ} ${OUT_FREQ} ${DATA}
+ARGS := 
 
 run:
 	${JULIA} --color=yes -O -- ${SRC} ${ARGS}
