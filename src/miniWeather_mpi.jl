@@ -40,20 +40,22 @@ const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl")
 # julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/Users/8yk/opt/usr/local"; using Pkg; Pkg.build("MPI"; verbose=true)'
 # julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/opt/cray/pe/mpich/8.1.16/ofi/crayclang/10.0"; using Pkg; Pkg.build("MPI"; verbose=true)'
 # MPI.install_mpiexecjl()
-MPI.Init()
-const COMM   = MPI.COMM_WORLD
-const NRANKS = MPI.Comm_size(COMM)
-const MYRANK = MPI.Comm_rank(COMM)
+Init()
+const COMM   = COMM_WORLD
+const NRANKS = Comm_size(COMM)
+const MYRANK = Comm_rank(COMM)
 
-if length(ARGS) >= 4
+if length(ARGS) >= 5
     const SIM_TIME    = parse(Float64, ARGS[1])
     const NX_GLOB     = parse(Int64, ARGS[2])
     const NZ_GLOB     = parse(Int64, ARGS[3])
-    const DATA_SPEC   = parse(Int64, ARGS[4])
+    const OUT_FREQ    = parse(Float64, ARGS[4])
+    const DATA_SPEC   = parse(Int64, ARGS[5])
 else
     const SIM_TIME    = Float64(100.0)
     const NX_GLOB     = Int64(200)
     const NZ_GLOB     = Int64(100)
+    const OUT_FREQ    = Float64(100.0)
     const DATA_SPEC   = Int64(1)
 end
     
@@ -131,7 +133,9 @@ function main(args::Vector{String})
     #@show(args)
     
     local etime = Float64(0.0)
+    local output_counter = Float64(0.0)
     local dt = DT
+    local nt = Int(1)
   
     #Initialize the grid and the data  
     (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
@@ -784,7 +788,7 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
 
     copyfrom(accel, state)
       
-    #call mpi_allreduce((/mass,te/),glob,2,MPI_REAL8,MPI_SUM,MPI_COMM_WORLD,ierr)
+    #call mpi_allreduce((/mass,te/),glob,2,MPI_REAL8,MPI_SUM,COMM,ierr)
     #mass = glob(1)
     #te   = glob(2)      
     
@@ -845,7 +849,7 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         if MASTERPROC
            var_global[I_BEG:I_END,:,ll] = var_local[:,:,ll]
         else
-           MPI.Gather!(var_local[:,:,ll],var_global[I_BEG:I_END,:,ll],MASTERPROC,COMM)
+           Gather!(var_local[:,:,ll],var_global[I_BEG:I_END,:,ll],MASTERPROC,COMM)
         end
     end
 

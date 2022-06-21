@@ -1,6 +1,7 @@
 # example command: jsrun  -n 2 -- make
 
 SIM_TIME := 400.0
+OUT_FREQ := 100.0
 NX := 100 
 NZ := 50
 
@@ -16,7 +17,7 @@ DATA := ${DATA_SPEC_THERMAL}
 
 JULIA := julia --project=.
 SRC := ../../src/miniWeather_mpi.jl
-ARGS := ${SIM_TIME} ${NX} ${NZ} ${DATA}
+ARGS := ${SIM_TIME} ${NX} ${NZ} ${OUT_FREQ} ${DATA}
 
 run:
 	${JULIA} --color=yes -O -- ${SRC} ${ARGS}

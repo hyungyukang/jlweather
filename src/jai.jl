@@ -2,8 +2,6 @@ module AcceleratorInterface
 
 using Debugger
 
-import IniFile.Inifile
-
 export AccelInfo, KernelInfo, copyto, copyfrom, launch
 
 # static accelerator info to generate a shared library
@@ -25,7 +23,6 @@ struct KernelInfo
     
     function KernelInfo(info::AccelInfo, inipath)
 
-        ini = read(Inifile(), inipath)
         @bp
         
         new(info, inipath)
