@@ -38,10 +38,12 @@ const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl")
     
 # julia command to link MPI.jl to system MPI installation
 # julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/Users/8yk/opt/usr/local"; using Pkg; Pkg.build("MPI"; verbose=true)'
-Init()
-const COMM   = COMM_WORLD
-const NRANKS = Comm_size(COMM)
-const MYRANK = Comm_rank(COMM)
+# julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/opt/cray/pe/mpich/8.1.16/ofi/crayclang/10.0"; using Pkg; Pkg.build("MPI"; verbose=true)'
+# MPI.install_mpiexecjl()
+MPI.Init()
+const COMM   = MPI.COMM_WORLD
+const NRANKS = MPI.Comm_size(COMM)
+const MYRANK = MPI.Comm_rank(COMM)
 
 if length(ARGS) >= 4
     const SIM_TIME    = parse(Float64, ARGS[1])
@@ -106,7 +108,6 @@ const DATA_SPEC_INJECTION       = 6
 const qpoints     = Array{Float64}([0.112701665379258311482073460022E0 , 0.500000000000000000000000000000E0 , 0.887298334620741688517926539980E0])
 const qweights    = Array{Float64}([0.277777777777777777777777777779E0 , 0.444444444444444444444444444444E0 , 0.277777777777777777777777777779E0])
 
-
 ##############
 # functions
 ##############
@@ -141,8 +142,7 @@ function main(args::Vector{String})
     local mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
 
     #Output the initial state
-    output()
-
+    # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
     
     # main loop
     elapsedtime = @elapsed while etime < SIM_TIME
@@ -159,6 +159,15 @@ function main(args::Vector{String})
 
         #Update the elapsed time and output counter
         etime = etime + dt
+        output_counter = output_counter + dt
+
+        #If it's time for output, reset the counter, and do output
+        if (output_counter >= OUT_FREQ)
+          #Increment the number of outputs
+          nt = nt + 1
+          # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
+          output_counter = output_counter - OUT_FREQ
+        end
 
         #println('  ',etime,'   ',minimum(state),'   ',maximum(state))
         #@printf("%.14f     %.14f     %.14f \n",etime,minimum(state),maximum(state))
@@ -805,8 +814,94 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     return glob
 end
 
-function output()
-    
+#Output the fluid state (state) to a NetCDF file at a given elapsed model time (etime)
+function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                etime::Float64,
+                nt::Int,
+                hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
+
+    var_local  = zeros(Float64, NX, NZ, NUM_VARS)
+
+    println("OUTPUT IN", MYRANK)
+
+    #if MASTERPROC
+    var_global  = zeros(Float64, NX_GLOB, NZ_GLOB, NUM_VARS)
+    #end
+
+    #Store perturbed values in the temp arrays for output
+    for k in 1:NZ
+        for i in 1:NX
+            var_local[i,k,ID_DENS]  = state[i,k,ID_DENS]
+            var_local[i,k,ID_UMOM]  = state[i,k,ID_UMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+            var_local[i,k,ID_WMOM]  = state[i,k,ID_WMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+            var_local[i,k,ID_RHOT] = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+                         - hy_dens_theta_cell[k] / hy_dens_cell[k]
+        end
+    end
+
+   #Gather data from multiple CPUs
+    for ll in 1:NUM_VARS
+        if MASTERPROC
+           var_global[I_BEG:I_END,:,ll] = var_local[:,:,ll]
+        else
+           MPI.Gather!(var_local[:,:,ll],var_global[I_BEG:I_END,:,ll],MASTERPROC,COMM)
+        end
+    end
+
+    println("OUTPUT MID", MYRANK)
+
+    # Write output only in MASTER
+    if MASTERPROC
+
+       #If the elapsed time is zero, create the file. Otherwise, open the file
+       if ( etime == 0.0 )
+
+          # Open NetCDF output file with a create mode
+          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","c")
+          #ds = Dataset("output.nc","c")
+
+          defDim(ds,"t",Inf)
+          defDim(ds,"x",NX_GLOB)
+          defDim(ds,"z",NZ_GLOB)
+
+          nc_var = defVar(ds,"t",Float64,("t",))
+          nc_var[nt] = etime
+          nc_var = defVar(ds,"dens",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_DENS]
+          nc_var = defVar(ds,"uwnd",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
+          nc_var = defVar(ds,"wwnd",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
+          nc_var = defVar(ds,"theta",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+
+          # Close NetCDF file
+          close(ds)
+
+       else
+
+          # Open NetCDF output file with an append mode
+          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","a")
+
+          nc_var = ds["t"]
+          nc_var[nt] = etime
+          nc_var = ds["dens"]
+          nc_var[:,:,nt] = var_global[:,:,ID_DENS]
+          nc_var = ds["uwnd"]
+          nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
+          nc_var = ds["wwnd"]
+          nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
+          nc_var = ds["theta"]
+          nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+
+          # Close NetCDF file
+          close(ds)
+
+       end # etime
+    end # MASTER
+
+    println("OUTPUT OUT", MYRANK)
 end
 
 function finalize!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
