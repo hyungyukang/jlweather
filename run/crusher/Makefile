@@ -16,9 +16,12 @@ DATA_SPEC_INJECTION       := 6
 DATA := ${DATA_SPEC_THERMAL}
 
 JULIA := julia --project=.
-SRC := ../../src/miniWeather_mpi.jl
+SRCDIR :=../../src
+SRC := ${SRCDIR}/miniWeather_mpi.jl
 #ARGS := ${SIM_TIME} ${NX} ${NZ} ${OUT_FREQ} ${DATA}
 ARGS := 
+C_FLAGS := -fPIC -shared
+CC := cc
 
 run:
 	${JULIA} --color=yes -O -- ${SRC} ${ARGS}
@@ -26,6 +29,11 @@ run:
 debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}
 
+datalib: ${SRCDIR}/data.cpp
+	${CC} ${C_FLAGS} -o $@.so $<
+
+kernellib: ${SRCDIR}/kernel.cpp
+	${CC} ${C_FLAGS} -o $@.so $<
 
 clean:
-	rm -rf core output.nc
+	rm -rf core output.nc *.so

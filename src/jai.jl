@@ -1,63 +1,78 @@
 module AcceleratorInterface
 
-include("./kernel.jl")
-import  .Kernel.parse_kernel
+import Libdl.dlopen,
+       Libdl.RTLD_LAZY,
+       Libdl.RTLD_DEEPBIND,
+       Libdl.RTLD_GLOBAL,
+       Libdl.dlsym
 
-#using Debugger
+import OffsetArrays.OffsetArray,
+       OffsetArrays.OffsetVector
 
 export AccelInfo, KernelInfo, copyin!, copyout!, launch!
 
-# static accelerator info to generate a shared library
-# generate multiple copyin, copyout, and launch functions 
-# based on union of data specifications
 struct AccelInfo
     
+	sharedlib
+
+	# load shared library
     function AccelInfo()
-        new()
+
+		run(`make datalib`)
+		dlib = dlopen("./datalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+        new(dlib)
     end
 end
 
 
-# static kernel info to generate a shared library
 struct KernelInfo
     
     ainfo::AccelInfo
-    path::AbstractString
-	parsed::Vector
+	sharedlib
  
-    function KernelInfo(ainfo::AccelInfo, inipath, argtypes:Any)
+    function KernelInfo(ainfo::AccelInfo)
 
-		parsed = parse_kernel(inipath)
-
-		# select accelerator from ainfo
-		acceltype = "fortran"
-
-		# generate code
-		section = get_section(acceltype)
-
-		# compile code
-		libpath = Fortran.gen_library(section, argtypes)
-
-		# load shared library
-
-		#dlib = Libdl.dlopen(PATH_DATALIB, RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
-		klib = Libdl.dlopen(libpath, RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
-
-		#dataenter = Libdl.dlsym(dlib, :dataenter)
-		#val = ccall(dataenter, Int64, (Array{Float64, 3},), state.parent)
-		#@show "BBB", state.offsets
-
-		#if val == C_NULL
-		#    error("dataenter: undefined variable: ", val)
-		#end
-
-        new(ainfo, inipath, parsed)
+		run(`make kernellib`)
+		klib = dlopen("./kernellib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+        new(ainfo, klib)
     end
 end
 
 # dynamically dispatch data to one of copyin functions generated in AccelInfo
 # based on data...
 function copyin!(ainfo::AccelInfo, data...)
+
+    dataenter = dlsym(ainfo.sharedlib, :dataenter)
+
+	dtypes = ()
+	args = []
+
+    for arg in data
+        #println(typeof(arg))
+        if arg isa OffsetArray
+
+            println(typeof(arg.parent), typeof(arg.offsets))
+            push!(dtypes, typeof(arg.parent))
+            push!(args, arg.parent)
+
+
+        elseif arg isa AbstractArray
+            push!(dtypes, typeof(arg))
+            push!(args, arg)
+        else
+            push!(dtypes, typeof(arg))
+            push!(args, arg)
+        end
+    end
+
+    println("BBBB", typeof(dtypes), typeof(args))
+    #val = ccall(dataenter, Int64, dtypes, 1)
+
+    #@show "BBB", state.offsets
+
+    #if val == C_NULL
+    #    error("dataenter: undefined variable: ", val)
+    #end
 
 end
 

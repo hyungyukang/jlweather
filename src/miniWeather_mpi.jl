@@ -814,7 +814,7 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     glob = Array{Float64}(undef, 2)
     
     accel  = AccelInfo()
-    kernel = KernelInfo(accel, PATH_REDUCTION_KERNEL)
+    kernel = KernelInfo(accel)
     
     copyin!(accel, state)
     
@@ -823,16 +823,6 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
 
     copyout!(accel, state)
       
-    #call mpi_allreduce((/mass,te/),glob,2,MPI_REAL8,MPI_SUM,COMM,ierr)
-    #mass = glob(1)
-    #te   = glob(2)      
-    
-#    acc = Accel(**data, vendor=vendor, accel=accel, lang=lang, recompile=False, _debug=DEBUG)
-    
-#    acc.launch(Kernel(knl), *args, environ=attr)
-
-#    acc.stop()
-    
     for k in 1:NZ
         for i in 1:NX
             r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
