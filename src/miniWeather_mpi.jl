@@ -816,12 +816,12 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     accel  = AccelInfo()
     kernel = KernelInfo(accel, PATH_REDUCTION_KERNEL)
     
-    copyto(accel, state)
+    copyin!(accel, state)
     
     #[Fortran: glob, mass, te, nz, nx, state, hy_dens_cell, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, C0, gamma, p0, rd, cp, cv, dx, dz]
-    launch(kernel, state)
+    launch!(kernel, state)
 
-    copyfrom(accel, state)
+    copyout!(accel, state)
       
     #call mpi_allreduce((/mass,te/),glob,2,MPI_REAL8,MPI_SUM,COMM,ierr)
     #mass = glob(1)
