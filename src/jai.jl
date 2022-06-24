@@ -117,7 +117,7 @@ function copyin!(ainfo::AccelInfo, data...)
     
     @eval val = $ccallexpr
 
-    @show "CCC", val
+    @show "CCC", val, data[1].parent[3,2,1]
 
     #if val == C_NULL
     #    error("dataenter: undefined variable: ", val)
