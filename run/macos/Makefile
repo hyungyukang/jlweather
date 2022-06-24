@@ -46,4 +46,4 @@ debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}
 
 clean:
-	rm -f *.so core
+	rm -f *.so core *.mod
