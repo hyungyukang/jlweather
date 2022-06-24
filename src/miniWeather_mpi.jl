@@ -42,7 +42,8 @@ const RIGHT_RANK = MYRANK+1 == NRANKS ? 0 : MYRANK + 1
 
 #Vertical direction isn't MPI-ized, so the rank's local values = the global values
 const K_BEG       = 1
-const MASTERPROC  = (MYRANK == 0)
+const MASTERRANK  = 0
+const MASTERPROC  = (MYRANK == MASTERRANK)
 
 const HS          = 2
 const STEN_SIZE   = 4 #Size of the stencil used for interpolation
@@ -797,15 +798,32 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         end
     end
 
-   #Gather data from multiple CPUs
-    for ll in 1:NUM_VARS
-        if MASTERPROC
-           var_global[I_BEG:I_END,:,ll] = var_local[:,:,ll]
-        else
-           MPI.Gather!(var_local[:,:,ll],var_global[I_BEG:I_END,:,ll],MASTERPROC,COMM)
-        end
+    #Gather data from multiple CPUs
+    #  - Implemented in an inefficient way for the purpose of tests
+    #  - Will be improved in next version.
+    if MASTERPROC
+       ibeg_chunk = zeros(Int,NRANKS)
+       iend_chunk = zeros(Int,NRANKS)
+       nchunk     = zeros(Int,NRANKS)
+       for n in 1:NRANKS
+          ibeg_chunk[n] = trunc(Int, round(NPER* (n-1))+1)
+          iend_chunk[n] = trunc(Int, round(NPER*((n-1)+1)))
+          nchunk[n]     = iend_chunk[n] - ibeg_chunk[n] + 1
+       end
     end
 
+    if MASTERPROC
+       var_global[I_BEG:I_END,:,:] = var_local[:,:,:]
+       if NRANKS > 1
+          for i in 2:NRANKS
+              var_local = Array{Float64}(undef, nchunk[i],NZ,NUM_VARS)
+              status = MPI.Recv!(var_local,i-1,0,COMM)
+              var_global[ibeg_chunk[i]:iend_chunk[i],:,:] = var_local[:,:,:]
+          end
+       end
+    else
+       MPI.Send(var_local,MASTERRANK,0,COMM)
+    end
 
     # Write output only in MASTER
     if MASTERPROC
