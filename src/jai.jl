@@ -15,14 +15,23 @@ export AccelInfo, KernelInfo, copyin!, copyout!, launch!
 
 struct AccelInfo
     
+    acceltype
 	sharedlib
 
 	# load shared library
-    function AccelInfo()
+    function AccelInfo(atype::String="F")
 
-		run(`make datalib`)
-		dlib = dlopen("./datalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
-        new(dlib)
+        if atype == "C"
+            run(`make c_datalib`)
+            dlib = dlopen("./c_datalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        elseif atype == "F"
+            run(`make f_datalib`)
+            dlib = dlopen("./f_datalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        end
+
+        new(atype, dlib)
     end
 end
 
@@ -34,8 +43,18 @@ struct KernelInfo
  
     function KernelInfo(ainfo::AccelInfo)
 
-		run(`make kernellib`)
-		klib = dlopen("./kernellib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+        if ainfo.acceltype == "C"
+
+		    run(`make c_kernellib`)
+		    klib = dlopen("./c_kernellib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        elseif ainfo.acceltype == "F"
+
+		    run(`make f_kernellib`)
+		    klib = dlopen("./f_kernellib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        end
+
         new(ainfo, klib)
     end
 end
@@ -49,58 +68,113 @@ function copyin!(ainfo::AccelInfo, data...)
     args = []
     dtypes = []
 
-    push!(args, length(data))
-    push!(dtypes, typeof(args[end]))
+    if ainfo.acceltype == "C"
+
+        push!(args, length(data))
+        push!(dtypes, typeof(args[end]))
+
+    elseif ainfo.acceltype == "F"
+
+        push!(args, length(data))
+        push!(dtypes, Ref{typeof(args[end])})
+
+    end
+
 
     for arg in data
         #println(typeof(arg))
+        
         if typeof(arg) <: OffsetArray
 
             offsets = arg.offsets
 
-            push!(args, length(offsets))
-            push!(dtypes, typeof(args[end]))
+            if ainfo.acceltype == "C"
+                push!(args, length(offsets))
+                push!(dtypes, typeof(args[end]))
 
-            push!(args, reverse(offsets))
-            push!(dtypes, Ref{typeof(args[end])})
+                push!(args, reverse(offsets))
+                push!(dtypes, Ref{typeof(args[end])})
 
-            push!(args, reverse(size(arg)))
-            push!(dtypes, Ref{typeof(args[end])})
+                push!(args, reverse(size(arg)))
+                push!(dtypes, Ref{typeof(args[end])})
 
-            push!(args, arg.parent)
-            push!(dtypes, Ptr{typeof(args[end])})
+                push!(args, arg.parent)
+                push!(dtypes, Ptr{typeof(args[end])})
 
-            # for debugging
-            #fill!(arg.parent, 100.)
-            #arg.parent[end, end, end] = 100.
-            arg.parent[3, 2, 1] = 100.
+                # for debugging
+                #arg.parent[end, end, end] = 100.
+                arg.parent[3, 2, 1] = 100.
+
+            elseif ainfo.acceltype == "F"
+                push!(args, length(offsets))
+                push!(dtypes, Ref{typeof(args[end])})
+
+                push!(args, offsets)
+                push!(dtypes, Ref{typeof(args[end])})
+
+                push!(args, size(arg))
+                push!(dtypes, Ref{typeof(args[end])})
+
+                push!(args, arg.parent)
+                push!(dtypes, Ptr{typeof(args[end])})
+
+                # for debugging
+                arg.parent[3, 2, 1] = 100.
+
+            end
 
         elseif typeof(arg) <: AbstractArray
 
             offsets = Tuple(1 for x = 1:x)
 
-            push!(args, length(offsets)) 
-            push!(dtypes, typeof(args[end]))
+            if ainfo.acceltype == "C"
 
-            push!(args, reverse(offsets))
-            push!(dtypes, Ref{typeof(args[end])})
+                push!(args, length(offsets)) 
+                push!(dtypes, typeof(args[end]))
 
-            push!(args, reverse(size(arg)))
-            push!(dtypes, Ref{typeof(args[end])})
+                push!(args, reverse(offsets))
+                push!(dtypes, Ref{typeof(args[end])})
 
-            push!(args, arg)
-            push!(dtypes, Ptr{typeof(args[end])})
+                push!(args, reverse(size(arg)))
+                push!(dtypes, Ref{typeof(args[end])})
 
-            # for debugging
-            #fill!(arg, 100.)
+                push!(args, arg)
+                push!(dtypes, Ptr{typeof(args[end])})
 
+            elseif ainfo.acceltype == "F"
+
+                push!(args, length(offsets)) 
+                push!(dtypes, Ref{typeof(args[end])})
+
+                push!(args, offsets)
+                push!(dtypes, Ref{typeof(args[end])})
+
+                push!(args, size(arg))
+                push!(dtypes, Ref{typeof(args[end])})
+
+                push!(args, arg)
+                push!(dtypes, Ptr{typeof(args[end])})
+
+            end
         else
 
-            push!(args, Int64(0)) 
-            push!(dtypes, typeof(args[end]))
+            if ainfo.acceltype == "C"
 
-            push!(args, arg)
-            push!(dtypes, typeof(arg))
+                push!(args, Int64(0)) 
+                push!(dtypes, typeof(args[end]))
+
+                push!(args, arg)
+                push!(dtypes, typeof(args[end]))
+
+            elseif ainfo.acceltype == "F"
+
+                push!(args, Int64(0)) 
+                push!(dtypes, Ref{typeof(args[end])})
+
+                push!(args, arg)
+                push!(dtypes, Ref{typeof(args[end])})
+
+            end
         end
     end
 

@@ -813,7 +813,7 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
     
-    accel  = AccelInfo()
+    accel  = AccelInfo("C")
     kernel = KernelInfo(accel)
     
     copyin!(accel, state)
