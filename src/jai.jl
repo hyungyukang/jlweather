@@ -1,5 +1,7 @@
 module AcceleratorInterface
 
+#import Meta.parse
+
 import Libdl.dlopen,
        Libdl.RTLD_LAZY,
        Libdl.RTLD_DEEPBIND,
@@ -44,31 +46,75 @@ function copyin!(ainfo::AccelInfo, data...)
 
     dataenter = dlsym(ainfo.sharedlib, :dataenter)
 
-	dtypes = ()
+    dtypes = []
 	args = []
 
     for arg in data
         #println(typeof(arg))
-        if arg isa OffsetArray
+        if typeof(arg) <: OffsetArray
 
-            println(typeof(arg.parent), typeof(arg.offsets))
-            push!(dtypes, typeof(arg.parent))
+            offsets = arg.offsets
+
+            push!(args, length(offsets))
+            push!(dtypes, typeof(args[end]))
+
+            push!(args, offsets)
+            push!(dtypes, typeof(args[end]))
+
+            push!(args, size(arg))
+            push!(dtypes, typeof(args[end]))
+
             push!(args, arg.parent)
+            push!(dtypes, typeof(args[end]))
 
+        elseif typeof(arg) <: AbstractArray
 
-        elseif arg isa AbstractArray
-            push!(dtypes, typeof(arg))
+            offsets = Tuple(1 for x = 1:x)
+
+            push!(args, length(offsets)) 
+            push!(dtypes, typeof(args[end]))
+
+            push!(args, offsets)
+            push!(dtypes, typeof(args[end]))
+
+            push!(args, size(arg))
+            push!(dtypes, typeof(args[end]))
+
             push!(args, arg)
+            push!(dtypes, typeof(args[end]))
+
         else
-            push!(dtypes, typeof(arg))
+
+            push!(args, Int64(0)) 
+            push!(dtypes, typeof(args[end]))
+
             push!(args, arg)
+            push!(dtypes, typeof(arg))
         end
     end
 
-    println("BBBB", typeof(dtypes), typeof(args))
-    #val = ccall(dataenter, Int64, dtypes, 1)
+    strtypes = string(((dtypes...),))
+    argtypes = Meta.parse(strtypes)
 
-    #@show "BBB", state.offsets
+    strargs = "(args[1], args[2], args[3], args[4])"
+    #println("BBB", strargs)
+    argdata = Meta.parse(strargs)
+
+    xx = :(ccall($dataenter, Int64, $argtypes, $(args...)))
+    #println("XXX", xx)
+
+    #println("CCC", dtypes, typeof(args))
+    #val = ccall(dataenter, Int64, (Array{Float64, 3},), args[1])
+    #@eval val = ccall($dataenter, Int64, (Array{Float64, 3},), $args[1])
+    #@eval val = ccall($dataenter, Int64, (($dtypes...),), $args[1])
+    #@eval val = ccall($dataenter, Int64, (($argtypes...),), (($args...),))
+    #@eval val = ccall($dataenter, Int64, $argtypes, 3, ($aaa).offsets, size($aaa), ($aaa).parent )
+    #@eval val = ccall($dataenter, Int64, $argtypes, $args[1], $args[2], $args[3], $args[4] )
+    #@eval val = ccall($dataenter, Int64, $argtypes, $(argdata...))
+    @eval val = $xx
+    #val = ccall(dataenter, Int64, (Array{Float64, 3},), args...)
+
+    @show "CCC", val
 
     #if val == C_NULL
     #    error("dataenter: undefined variable: ", val)
