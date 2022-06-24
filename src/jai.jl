@@ -46,8 +46,11 @@ function copyin!(ainfo::AccelInfo, data...)
 
     dataenter = dlsym(ainfo.sharedlib, :dataenter)
 
+    args = []
     dtypes = []
-	args = []
+
+    push!(args, length(data))
+    push!(dtypes, typeof(args[end]))
 
     for arg in data
         #println(typeof(arg))
@@ -58,14 +61,19 @@ function copyin!(ainfo::AccelInfo, data...)
             push!(args, length(offsets))
             push!(dtypes, typeof(args[end]))
 
-            push!(args, offsets)
-            push!(dtypes, typeof(args[end]))
+            push!(args, reverse(offsets))
+            push!(dtypes, Ref{typeof(args[end])})
 
-            push!(args, size(arg))
-            push!(dtypes, typeof(args[end]))
+            push!(args, reverse(size(arg)))
+            push!(dtypes, Ref{typeof(args[end])})
 
             push!(args, arg.parent)
-            push!(dtypes, typeof(args[end]))
+            push!(dtypes, Ptr{typeof(args[end])})
+
+            # for debugging
+            #fill!(arg.parent, 100.)
+            #arg.parent[end, end, end] = 100.
+            arg.parent[3, 2, 1] = 100.
 
         elseif typeof(arg) <: AbstractArray
 
@@ -74,14 +82,17 @@ function copyin!(ainfo::AccelInfo, data...)
             push!(args, length(offsets)) 
             push!(dtypes, typeof(args[end]))
 
-            push!(args, offsets)
-            push!(dtypes, typeof(args[end]))
+            push!(args, reverse(offsets))
+            push!(dtypes, Ref{typeof(args[end])})
 
-            push!(args, size(arg))
-            push!(dtypes, typeof(args[end]))
+            push!(args, reverse(size(arg)))
+            push!(dtypes, Ref{typeof(args[end])})
 
             push!(args, arg)
-            push!(dtypes, typeof(args[end]))
+            push!(dtypes, Ptr{typeof(args[end])})
+
+            # for debugging
+            #fill!(arg, 100.)
 
         else
 
@@ -93,17 +104,9 @@ function copyin!(ainfo::AccelInfo, data...)
         end
     end
 
-    strtypes = string(((dtypes...),))
-    argtypes = Meta.parse(strtypes)
+    argtypes = Meta.parse(string(((dtypes...),)))
+    ccallexpr = :(ccall($dataenter, Int64, $argtypes, $(args...)))
 
-    strargs = "(args[1], args[2], args[3], args[4])"
-    #println("BBB", strargs)
-    argdata = Meta.parse(strargs)
-
-    xx = :(ccall($dataenter, Int64, $argtypes, $(args...)))
-    #println("XXX", xx)
-
-    #println("CCC", dtypes, typeof(args))
     #val = ccall(dataenter, Int64, (Array{Float64, 3},), args[1])
     #@eval val = ccall($dataenter, Int64, (Array{Float64, 3},), $args[1])
     #@eval val = ccall($dataenter, Int64, (($dtypes...),), $args[1])
@@ -111,8 +114,8 @@ function copyin!(ainfo::AccelInfo, data...)
     #@eval val = ccall($dataenter, Int64, $argtypes, 3, ($aaa).offsets, size($aaa), ($aaa).parent )
     #@eval val = ccall($dataenter, Int64, $argtypes, $args[1], $args[2], $args[3], $args[4] )
     #@eval val = ccall($dataenter, Int64, $argtypes, $(argdata...))
-    @eval val = $xx
-    #val = ccall(dataenter, Int64, (Array{Float64, 3},), args...)
+    
+    @eval val = $ccallexpr
 
     @show "CCC", val
 
