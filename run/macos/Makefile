@@ -25,19 +25,25 @@ FC  := gfortran
 
 CXXFLAGS := -shared -fPIC
 C_FLAGS := -fPIC -shared
+F_FLAGS := -fPIC -shared
 
 run:
 	${JULIA} --color=yes -O -- ${JLSRC} ${ARGS}
 
-
-datalib: ${SRCDIR}/data.cpp
+c_datalib: ${SRCDIR}/data.cpp
 	${CC} ${C_FLAGS} -o $@.so $<
 
-kernellib: ${SRCDIR}/kernel.cpp
+c_kernellib: ${SRCDIR}/kernel.cpp
 	${CC} ${C_FLAGS} -o $@.so $<
+
+f_datalib: ${SRCDIR}/data.F90
+	${FC} ${F_FLAGS} -o $@.so $<
+
+f_kernellib: ${SRCDIR}/kernel.F90
+	${FC} ${F_FLAGS} -o $@.so $<
 
 debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}
 
 clean:
-	rm -f *.so
+	rm -f *.so core
