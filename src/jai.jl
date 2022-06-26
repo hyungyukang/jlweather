@@ -1,4 +1,4 @@
-module AcceleratorInterface
+module AccelInterfaces
 
 #import Meta.parse
 
@@ -11,75 +11,50 @@ import Libdl.dlopen,
 import OffsetArrays.OffsetArray,
        OffsetArrays.OffsetVector
 
-export AccelInfo, KernelInfo, copyin!, copyout!, launch!
+export AccelInfo, KernelInfo, copyin!, copyout!, launch!,
+       FLANG, CLANG
+
+@enum AccelType FLANG CLANG
 
 struct AccelInfo
     
-    acceltype
-	sharedlib
+    acceltype::AccelType
+    ismaster::Bool
+    sharedlibs::Dict
 
-	# load shared library
-    function AccelInfo(atype::String="F")
+    function AccelInfo(acceltype::AccelType=FLANG; ismaster::Bool=true)
 
-        if atype == "C"
-            run(`make c_datalib`)
-            dlib = dlopen("./c_datalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
-
-        elseif atype == "F"
-            run(`make f_datalib`)
-            dlib = dlopen("./f_datalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
-
-        end
-
-        new(atype, dlib)
+        new(acceltype, ismaster, Dict())
     end
 end
-
 
 struct KernelInfo
     
-    ainfo::AccelInfo
-	sharedlib
- 
-    function KernelInfo(ainfo::AccelInfo)
+    kernelpath::String
 
-        if ainfo.acceltype == "C"
+    function KernelInfo(path::String)
 
-		    run(`make c_kernellib`)
-		    klib = dlopen("./c_kernellib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
-
-        elseif ainfo.acceltype == "F"
-
-		    run(`make f_kernellib`)
-		    klib = dlopen("./f_kernellib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
-
-        end
-
-        new(ainfo, klib)
+        new(path)
     end
 end
 
-# dynamically dispatch data to one of copyin functions generated in AccelInfo
-# based on data...
-function copyin!(ainfo::AccelInfo, data...)
 
-    dataenter = dlsym(ainfo.sharedlib, :dataenter)
+function argsdtypes(ainfo::AccelInfo, data...)
 
     args = []
     dtypes = []
 
-    if ainfo.acceltype == "C"
+    if ainfo.acceltype == CLANG
 
         push!(args, length(data))
         push!(dtypes, typeof(args[end]))
 
-    elseif ainfo.acceltype == "F"
+    elseif ainfo.acceltype == FLANG
 
         push!(args, length(data))
         push!(dtypes, Ref{typeof(args[end])})
 
     end
-
 
     for arg in data
         #println(typeof(arg))
@@ -88,7 +63,7 @@ function copyin!(ainfo::AccelInfo, data...)
 
             offsets = arg.offsets
 
-            if ainfo.acceltype == "C"
+            if ainfo.acceltype == CLANG
                 push!(args, length(offsets))
                 push!(dtypes, typeof(args[end]))
 
@@ -105,7 +80,7 @@ function copyin!(ainfo::AccelInfo, data...)
                 #arg.parent[end, end, end] = 100.
                 arg.parent[3, 2, 1] = 100.
 
-            elseif ainfo.acceltype == "F"
+            elseif ainfo.acceltype == FLANG
                 push!(args, length(offsets))
                 push!(dtypes, Ref{typeof(args[end])})
 
@@ -127,7 +102,7 @@ function copyin!(ainfo::AccelInfo, data...)
 
             offsets = Tuple(1 for x = 1:x)
 
-            if ainfo.acceltype == "C"
+            if ainfo.acceltype == CLANG
 
                 push!(args, length(offsets)) 
                 push!(dtypes, typeof(args[end]))
@@ -141,7 +116,7 @@ function copyin!(ainfo::AccelInfo, data...)
                 push!(args, arg)
                 push!(dtypes, Ptr{typeof(args[end])})
 
-            elseif ainfo.acceltype == "F"
+            elseif ainfo.acceltype == FLANG
 
                 push!(args, length(offsets)) 
                 push!(dtypes, Ref{typeof(args[end])})
@@ -158,7 +133,7 @@ function copyin!(ainfo::AccelInfo, data...)
             end
         else
 
-            if ainfo.acceltype == "C"
+            if ainfo.acceltype == CLANG
 
                 push!(args, Int64(0)) 
                 push!(dtypes, typeof(args[end]))
@@ -166,7 +141,7 @@ function copyin!(ainfo::AccelInfo, data...)
                 push!(args, arg)
                 push!(dtypes, typeof(args[end]))
 
-            elseif ainfo.acceltype == "F"
+            elseif ainfo.acceltype == FLANG
 
                 push!(args, Int64(0)) 
                 push!(dtypes, Ref{typeof(args[end])})
@@ -178,8 +153,52 @@ function copyin!(ainfo::AccelInfo, data...)
         end
     end
 
+    args, dtypes
+end
+
+
+function copyin!(ainfo::AccelInfo, data...)
+
+    # generate sha from data
+
+    args, dtypes = argsdtypes(ainfo, data...)
+
+    # generate hash for enterdata
+
+    datahash = hash(("copyin!", ainfo.acceltype, dtypes))
+
+    if !haskey(ainfo.sharedlibs, datahash)
+        println("Compiling shared library")
+
+        if ainfo.acceltype == CLANG
+            run(`make c_enterdatalib`)
+            dlib = dlopen("./c_enterdatalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        elseif ainfo.acceltype == FLANG
+
+            # generate source code
+            #
+            # compile code
+
+            run(`make f_enterdatalib`)
+            dlib = dlopen("./f_enterdatalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        end
+
+        ainfo.sharedlibs[datahash] = dlib
+
+    else
+        println("Reusing shared library")
+        dlib = ainfo.sharedlibs[datahash]
+
+    end
+
+    dataenter = dlsym(dlib, :dataenter)
+
     argtypes = Meta.parse(string(((dtypes...),)))
-    ccallexpr = :(ccall($dataenter, Int64, $argtypes, $(args...)))
+    # C and Fortran does not need to enter data
+    #ccallexpr = :(ccall($dataenter, Int64, $argtypes, $(args...)))
+    ccallexpr = :(ccall($dataenter, Int64, ()))
 
     #val = ccall(dataenter, Int64, (Array{Float64, 3},), args[1])
     #@eval val = ccall($dataenter, Int64, (Array{Float64, 3},), $args[1])
@@ -203,13 +222,113 @@ end
 # dynamically dispatch data to one of copyout functions generated in AccelInfo
 # based on data...
 function copyout!(ainfo::AccelInfo, data...)
+
+    # generate sha from data
+
+    args, dtypes = argsdtypes(ainfo, data...)
+
+    # generate hash for exitdata
+
+    datahash = hash(("copyout!", ainfo.acceltype, dtypes))
+
+    if !haskey(ainfo.sharedlibs, datahash)
+        println("Compiling shared library")
+
+        if ainfo.acceltype == CLANG
+            run(`make c_exitdatalib`)
+            dlib = dlopen("./c_exitdatalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        elseif ainfo.acceltype == FLANG
+
+            # generate source code
+            #
+            # compile code
+
+            run(`make f_exitdatalib`)
+            dlib = dlopen("./f_exitdatalib.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        end
+
+        ainfo.sharedlibs[datahash] = dlib
+
+    else
+        println("Reusing shared library")
+        dlib = ainfo.sharedlibs[datahash]
+
+    end
+
+    dataexit = dlsym(dlib, :dataexit)
+
+    argtypes = Meta.parse(string(((dtypes...),)))
+    # C and Fortran does not need to exit data
+    #ccallexpr = :(ccall($dataexit, Int64, $argtypes, $(args...)))
+    ccallexpr = :(ccall($dataexit, Int64, ()))
+    
+    @eval val = $ccallexpr
+
+    @show "CCC", val, data[1].parent[3,2,1]
+
 end
 
 
-# dynamically dispatch kernel one of launch functions generated in KernelInfo
+# dynamically dispatch kernel one of launch functions generated in 
 # based on data...
-function launch!(kinfo::KernelInfo, data...)
-	println(kinfo)
+function launch!(ainfo::AccelInfo, kinfo::KernelInfo,
+                data...; copyin::Any=nothing, copyout::Any=nothing,
+                update::Any=nothing, compile::Union{String, Nothing}=nothing,
+                workdir::Any=nothing)
+
+    # generate sha from data
+
+    args, dtypes = argsdtypes(ainfo, data...)
+
+    # generate hash for exitdata
+
+    kernelhash = hash(("launch!", ainfo.acceltype, dtypes))
+
+    if !haskey(ainfo.sharedlibs, kernelhash)
+        println("Compiling shared library")
+
+        if ainfo.acceltype == CLANG
+            run(`make c_$kernelhash KERNELPATH=$kinfo.kernelpath`)
+            dlib = dlopen("./c_$kernelhash.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        elseif ainfo.acceltype == FLANG
+
+            # generate source code
+            #
+            # compile code
+            
+            fname, ext = splitext(basename(kinfo.kernelpath))
+
+            if compile === nothing
+                run(`make f_$fname KERNELPATH=$(kinfo.kernelpath)`)
+
+            else
+                run(`$(split(compile)) -o f_$fname.so $(kinfo.kernelpath)`)
+
+            end
+
+            dlib = dlopen("./f_$fname.so", RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL)
+
+        end
+
+        ainfo.sharedlibs[kernelhash] = dlib
+
+    else
+        println("Reusing shared library")
+        dlib = ainfo.sharedlibs[kernelhash]
+
+    end
+
+    launch = dlsym(dlib, :launch)
+
+    argtypes = Meta.parse(string(((dtypes...),)))
+    # C and Fortran does not need to exit data
+    ccallexpr = :(ccall($launch, Int64, $argtypes, $(args...)))
+    
+    @eval val = $ccallexpr
+
 end
 
 

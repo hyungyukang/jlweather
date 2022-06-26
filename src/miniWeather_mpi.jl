@@ -1,6 +1,6 @@
 
 include("./jai.jl")
-using  .AcceleratorInterface
+using  .AccelInterfaces
 
 import OffsetArrays.OffsetArray,
        OffsetArrays.OffsetVector
@@ -34,7 +34,8 @@ import Libdl
 
 const PATH_DATALIB = joinpath(@__DIR__, "dlib.so") 
 const PATH_KERNELLIB = joinpath(@__DIR__, "klib.so") 
-const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl") 
+#const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl") 
+const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.F90") 
 
 ##############
 # constants
@@ -171,14 +172,19 @@ function main(args::Vector{String})
     local output_counter = Float64(0.0)
     local dt = DT
     local nt = Int(1)
-  
+      
+    #accel  = AccelInfo(CLANG, ismaster=MASTERPROC)
+    accel  = AccelInfo(FLANG, ismaster=MASTERPROC)
+
+    reduce_kernel  = KernelInfo(PATH_REDUCTION_KERNEL)
+
     #Initialize the grid and the data  
     (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
             sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
     #Initial reductions for mass, kinetic energy, and total energy
-    local mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
+    local mass0, te0 = reductions(accel, reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
 
     #Output the initial state
     # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
@@ -212,7 +218,7 @@ function main(args::Vector{String})
         #@printf("%.14f     %.14f     %.14f \n",etime,minimum(state),maximum(state))
     end
 
-    local mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
+    local mass, te = reductions(accel, reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
     
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
@@ -806,20 +812,18 @@ function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
 
 end
             
-function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+function reductions(accel::AccelInfo, reduce_kernel::KernelInfo,
+                    state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
     
     local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
     
-    accel  = AccelInfo("C")
-    kernel = KernelInfo(accel)
-    
     copyin!(accel, state)
     
     #[Fortran: glob, mass, te, nz, nx, state, hy_dens_cell, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, C0, gamma, p0, rd, cp, cv, dx, dz]
-    launch!(kernel, state)
+    launch!(accel, reduce_kernel, state, compile="gfortran -fPIC -shared")
 
     copyout!(accel, state)
       

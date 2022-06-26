@@ -14,6 +14,9 @@ DATA := ${DATA_SPEC_THERMAL}
 
 JULIA := julia --project=. -g 2
 
+KERNELPATH ?=
+KERNELHASH ?=
+
 SRCDIR := ../../src
 JLSRC  := ${SRCDIR}/miniWeather_mpi.jl
 #ARGS := ${SIM_TIME} ${NX} ${NZ} ${DATA}
@@ -30,13 +33,19 @@ F_FLAGS := -fPIC -shared
 run:
 	${JULIA} --color=yes -O -- ${JLSRC} ${ARGS}
 
-c_datalib: ${SRCDIR}/data.cpp
+c_enterdatalib: ${SRCDIR}/enterdata.cpp
+	${CC} ${C_FLAGS} -o $@.so $<
+
+c_exitdatalib: ${SRCDIR}/exitdata.cpp
 	${CC} ${C_FLAGS} -o $@.so $<
 
 c_kernellib: ${SRCDIR}/kernel.cpp
 	${CC} ${C_FLAGS} -o $@.so $<
 
-f_datalib: ${SRCDIR}/data.F90
+f_enterdatalib: ${SRCDIR}/enterdata.F90
+	${FC} ${F_FLAGS} -o $@.so $<
+
+f_exitdatalib: ${SRCDIR}/exitdata.F90
 	${FC} ${F_FLAGS} -o $@.so $<
 
 f_kernellib: ${SRCDIR}/kernel.F90
