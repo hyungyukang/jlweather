@@ -39,7 +39,89 @@ struct KernelInfo
 end
 
 
-function argsdtypes(ainfo::AccelInfo, data...)
+function argsdtypes(ainfo::AccelInfo, copyin, copyout, copyinout)
+
+    args = []
+    dtypes = []
+    data = []
+
+    for cin in copyin
+        push!(data, cin)
+    end
+    for cout in copyout
+        push!(data, cout)
+    end
+    for cinout in copyinout
+        push!(data, cinout)
+    end
+
+    for arg in data
+        
+        if typeof(arg) <: OffsetArray
+
+            offsets = arg.offsets
+
+            if ainfo.acceltype == CLANG
+
+                push!(args, arg.parent)
+                push!(dtypes, Ptr{typeof(args[end])})
+
+            elseif ainfo.acceltype == FLANG
+
+                # for debugging
+                #arg[0, 0, 1] = 100.
+                #arg.parent[2, 2, 1] = 100.
+
+                #push!(args, length(offsets))
+                #push!(dtypes, Ref{typeof(args[end])})
+
+                #push!(args, offsets)
+                #push!(dtypes, Ref{typeof(args[end])})
+
+                #push!(args, size(arg))
+                #push!(dtypes, Ref{typeof(args[end])})
+
+                push!(args, arg.parent)
+                push!(dtypes, Ptr{typeof(args[end])})
+
+            end
+
+        elseif typeof(arg) <: AbstractArray
+
+            #offsets = Tuple(1 for x = 1:x)
+
+            #push!(args, length(offsets)) 
+            #push!(dtypes, typeof(args[end]))
+
+            #push!(args, reverse(offsets))
+            #push!(dtypes, Ref{typeof(args[end])})
+
+            #push!(args, reverse(size(arg)))
+            #push!(dtypes, Ref{typeof(args[end])})
+
+            push!(args, arg)
+            push!(dtypes, Ptr{typeof(args[end])})
+
+        else
+
+            if ainfo.acceltype == CLANG
+
+                push!(args, arg)
+                push!(dtypes, typeof(args[end]))
+
+            elseif ainfo.acceltype == FLANG
+
+                push!(args, arg)
+                push!(dtypes, Ref{typeof(args[end])})
+
+            end
+        end
+    end
+
+    args, dtypes
+end
+
+function argsdtypes1(ainfo::AccelInfo, data...)
 
     args = []
     dtypes = []
@@ -161,7 +243,7 @@ function copyin!(ainfo::AccelInfo, data...)
 
     # generate sha from data
 
-    args, dtypes = argsdtypes(ainfo, data...)
+    args, dtypes = argsdtypes(ainfo, data, (), ())
 
     # generate hash for enterdata
 
@@ -210,7 +292,7 @@ function copyin!(ainfo::AccelInfo, data...)
     
     @eval val = $ccallexpr
 
-    @show "CCC", val, data[1].parent[3,2,1]
+    #@show "CCC", val, data[1].parent[3,2,1]
 
     #if val == C_NULL
     #    error("dataenter: undefined variable: ", val)
@@ -225,7 +307,7 @@ function copyout!(ainfo::AccelInfo, data...)
 
     # generate sha from data
 
-    args, dtypes = argsdtypes(ainfo, data...)
+    args, dtypes = argsdtypes(ainfo, (), data, ())
 
     # generate hash for exitdata
 
@@ -274,13 +356,14 @@ end
 # dynamically dispatch kernel one of launch functions generated in 
 # based on data...
 function launch!(ainfo::AccelInfo, kinfo::KernelInfo,
-                data...; copyin::Any=nothing, copyout::Any=nothing,
-                update::Any=nothing, compile::Union{String, Nothing}=nothing,
+                data...; copyout::Union{Tuple, Vector}=(),
+                copyinout::Union{Tuple, Vector}=(),
+                compile::Union{String, Nothing}=nothing,
                 workdir::Any=nothing)
 
     # generate sha from data
 
-    args, dtypes = argsdtypes(ainfo, data...)
+    args, dtypes = argsdtypes(ainfo, data, copyout, copyinout)
 
     # generate hash for exitdata
 

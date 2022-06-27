@@ -820,28 +820,37 @@ function reductions(accel::AccelInfo, reduce_kernel::KernelInfo,
     local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
     
-    copyin!(accel, state)
-    
-    #[Fortran: glob, mass, te, nz, nx, state, hy_dens_cell, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, C0, gamma, p0, rd, cp, cv, dx, dz]
-    launch!(accel, reduce_kernel, state, compile="gfortran -fPIC -shared")
+    #copyin!(accel, state)
 
-    copyout!(accel, state)
-      
-    for k in 1:NZ
-        for i in 1:NX
-            r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
-            u  =   state[i,k,ID_UMOM] / r                           # U-wind
-            w  =   state[i,k,ID_WMOM] / r                           # W-wind
-            th = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / r # Potential Temperature (theta)
-            p  = C0*(r*th)^GAMMA      # Pressure
-            t  = th / (P0/p)^(RD/CP)  # Temperature
-            ke = r*(u*u+w*w)          # Kinetic Energy
-            ie = r*CV*t               # Internal Energy
-            mass = mass + r            *DX*DZ # Accumulate domain mass
-            te   = te   + (ke + r*CV*t)*DX*DZ # Accumulate domain total energy
-        end
-    end
-    
+    launch!(accel, reduce_kernel, NX, NZ, DX, DZ, HS, NUM_VARS, state,
+                   hy_dens_cell, hy_dens_theta_cell, C0, GAMMA,
+                   P0, RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM,
+                   ID_RHOT, copyout=(glob,), compile="gfortran -fPIC -shared")
+
+    mass = glob[1]
+    te = glob[2]
+
+    println("MASS0: ", mass, te)
+
+    #copyout!(accel, state)
+#      
+#    for k in 1:NZ
+#        for i in 1:NX
+#            r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
+#            u  =   state[i,k,ID_UMOM] / r                           # U-wind
+#            w  =   state[i,k,ID_WMOM] / r                           # W-wind
+#            th = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / r # Potential Temperature (theta)
+#            p  = C0*(r*th)^GAMMA      # Pressure
+#            t  = th / (P0/p)^(RD/CP)  # Temperature
+#            ke = r*(u*u+w*w)          # Kinetic Energy
+#            ie = r*CV*t               # Internal Energy
+#            mass = mass + r            *DX*DZ # Accumulate domain mass
+#            te   = te   + (ke + r*CV*t)*DX*DZ # Accumulate domain total energy
+#        end
+#    end
+#    
+#    println("MASS1: ", mass, te)
+
     Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
     
     return glob
