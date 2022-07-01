@@ -1,4 +1,5 @@
 # example command: jsrun  -n 2 -- make
+# example command: srun  -n 2 -- make
 
 SIM_TIME := 400.0
 OUT_FREQ := 100.0
@@ -20,20 +21,38 @@ SRCDIR :=../../src
 SRC := ${SRCDIR}/miniWeather_mpi.jl
 #ARGS := ${SIM_TIME} ${NX} ${NZ} ${OUT_FREQ} ${DATA}
 ARGS := 
-C_FLAGS := -fPIC -shared
+
 CC := cc
+CXX := CC
+FC := ftn
+
+CXX_FLAGS := -fPIC -shared
+C_FLAGS := -fPIC -shared
+F_FLAGS := -fPIC -shared
 
 run:
 	${JULIA} --color=yes -O -- ${SRC} ${ARGS}
 
+c_enterdatalib: ${SRCDIR}/enterdata.cpp
+	${CC} ${C_FLAGS} -o $@.so $<
+
+c_exitdatalib: ${SRCDIR}/exitdata.cpp
+	${CC} ${C_FLAGS} -o $@.so $<
+
+c_kernellib: ${SRCDIR}/kernel.cpp
+	${CC} ${C_FLAGS} -o $@.so $<
+
+f_enterdatalib: ${SRCDIR}/enterdata.F90
+	${FC} ${F_FLAGS} -o $@.so $<
+
+f_exitdatalib: ${SRCDIR}/exitdata.F90
+	${FC} ${F_FLAGS} -o $@.so $<
+
+f_kernellib: ${SRCDIR}/kernel.F90
+	${FC} ${F_FLAGS} -o $@.so $<
+
 debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}
 
-datalib: ${SRCDIR}/data.cpp
-	${CC} ${C_FLAGS} -o $@.so $<
-
-kernellib: ${SRCDIR}/kernel.cpp
-	${CC} ${C_FLAGS} -o $@.so $<
-
 clean:
-	rm -rf core output.nc *.so
+	rm -f *.so core *.mod

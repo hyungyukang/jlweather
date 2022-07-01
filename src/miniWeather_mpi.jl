@@ -1,6 +1,18 @@
 
-include("./jai.jl")
-using  .AccelInterfaces
+include("./AccelInterfaces.jl")
+#using  .AccelInterfaces
+
+import .AccelInterfaces.AccelInfo,
+       .AccelInterfaces.KernelInfo,
+       .AccelInterfaces.allocate!,
+       .AccelInterfaces.deallocate!,
+       .AccelInterfaces.copyin!,
+       .AccelInterfaces.copyout!,
+       .AccelInterfaces.launch!,
+       .AccelInterfaces.get_accel!,
+       .AccelInterfaces.get_kernel!,
+       .AccelInterfaces.FLANG,
+       .AccelInterfaces.CLANG
 
 import OffsetArrays.OffsetArray,
        OffsetArrays.OffsetVector
@@ -172,11 +184,27 @@ function main(args::Vector{String})
     local output_counter = Float64(0.0)
     local dt = DT
     local nt = Int(1)
-      
-    #accel  = AccelInfo(CLANG, ismaster=MASTERPROC)
-    accel  = AccelInfo(FLANG, ismaster=MASTERPROC)
+          
+    compile_f_gnu = "gfortran -fPIC -shared"
 
-    reduce_kernel  = KernelInfo(PATH_REDUCTION_KERNEL)
+    #accel  = AccelInfo(CLANG, ismaster=MASTERPROC)
+    #accel  = AccelInfo(FLANG, ismaster=MASTERPROC)
+
+    #launch!(accel, reduce_kernel, NX, NZ, DX, DZ, HS, NUM_VARS, state,
+    #               hy_dens_cell, hy_dens_theta_cell, C0, GAMMA,
+    #               P0, RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM,
+    #               ID_RHOT, intentout=(glob,), compile=compile_f_gnu)
+
+    constvars = (NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0,
+                RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT)
+
+    constnames = ("NX", "NZ", "DX", "DZ", "HS", "NUM_VARS", "C0", "GAMMA", "P0",
+                    "RD", "CP", "CV", "ID_DENS", "ID_UMOM", "ID_WMOM", "ID_RHOT")
+
+    accel = get_accel!(FLANG, ismaster=MASTERPROC, constvars=constvars, compile=compile_f_gnu,
+                        constnames=constnames)
+
+    reduce_kernel = get_kernel!(accel, PATH_REDUCTION_KERNEL)
 
     #Initialize the grid and the data  
     (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
@@ -184,7 +212,7 @@ function main(args::Vector{String})
             sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
     #Initial reductions for mass, kinetic energy, and total energy
-    local mass0, te0 = reductions(accel, reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+    local mass0, te0 = reductions(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
 
     #Output the initial state
     # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
@@ -218,7 +246,7 @@ function main(args::Vector{String})
         #@printf("%.14f     %.14f     %.14f \n",etime,minimum(state),maximum(state))
     end
 
-    local mass, te = reductions(accel, reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+    local mass, te = reductions(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
     
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
@@ -812,27 +840,28 @@ function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
 
 end
             
-function reductions(accel::AccelInfo, reduce_kernel::KernelInfo,
+function reductions(reduce_kernel::KernelInfo,
                     state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
     
     local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
-    
-    #copyin!(accel, state)
 
-    launch!(accel, reduce_kernel, NX, NZ, DX, DZ, HS, NUM_VARS, state,
-                   hy_dens_cell, hy_dens_theta_cell, C0, GAMMA,
-                   P0, RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM,
-                   ID_RHOT, copyout=(glob,), compile="gfortran -fPIC -shared")
+	allocate!(reduce_kernel, glob, state, hy_dens_cell, hy_dens_theta_cell)
+	copyin!(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+
+    launch!(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell,
+            outvars=(glob,), innames=("state", "hy_dens_cell", "hy_dens_theta_cell"),
+            outnames=("glob",))
 
     mass = glob[1]
     te = glob[2]
 
     println("MASS0: ", mass, te)
 
-    #copyout!(accel, state)
+	copyout!(reduce_kernel, glob)
+	deallocate!(reduce_kernel, glob, state, hy_dens_cell, hy_dens_theta_cell)
 #      
 #    for k in 1:NZ
 #        for i in 1:NX

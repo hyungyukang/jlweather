@@ -14,9 +14,6 @@ DATA := ${DATA_SPEC_THERMAL}
 
 JULIA := julia --project=. -g 2
 
-KERNELPATH ?=
-KERNELHASH ?=
-
 SRCDIR := ../../src
 JLSRC  := ${SRCDIR}/miniWeather_mpi.jl
 #ARGS := ${SIM_TIME} ${NX} ${NZ} ${DATA}

@@ -1,6 +1,7 @@
 module AccelInterfaces
 
-#import Meta.parse
+include("./flang.jl")
+import  .FortranInterface as JFI
 
 import Libdl.dlopen,
        Libdl.RTLD_LAZY,
