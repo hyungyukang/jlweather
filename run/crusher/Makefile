@@ -17,47 +17,35 @@ DATA_SPEC_TURBULENCE      := 4
 DATA_SPEC_DENSITY_CURRENT := 5
 DATA_SPEC_INJECTION       := 6
 
-#DATA := ${DATA_SPEC_COLLISION}
-DATA := ${DATA_SPEC_THERMAL}
+#DATA_SPEC := ${DATA_SPEC_COLLISION}
+DATA_SPEC := ${DATA_SPEC_THERMAL}
 
 #JULIA := julia --project=.
 JULIA := julia --project=/ccs/home/grnydawn/repos/github/jlweather/run/crusher
 SRCDIR :=../../src
 SRC := ${SRCDIR}/miniWeather_mpi.jl
-ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA}
+FORTSRC := ${SRCDIR}/miniWeather_mpi.F90
+ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA_SPEC}
 #ARGS := 
 
 CC := cc
 CXX := CC
 FC := ftn
 
-CXX_FLAGS := -fPIC -shared
-C_FLAGS := -fPIC -shared
-F_FLAGS := -fPIC -shared
+INCLUDES := -I${OLCF_PARALLEL_NETCDF_ROOT}/include
+LIBS := -L${OLCF_PARALLEL_NETCDF_ROOT}/lib -lpnetcdf
+MACROS := -D_NX=${NX} -D_NZ=${NZ} -D_SIM_TIME=${SIM_TIME} -D_OUT_FREQ=${OUT_FREQ} -D_DATA_SPEC=${DATA_SPEC}
 
-run:
+F_FLAGS := ${INCLUDES} ${LIBS} ${MACROS}
+
+julia:
 	${JULIA} --color=yes -O -- ${SRC} ${ARGS}
-
-c_enterdatalib: ${SRCDIR}/enterdata.cpp
-	${CC} ${C_FLAGS} -o $@.so $<
-
-c_exitdatalib: ${SRCDIR}/exitdata.cpp
-	${CC} ${C_FLAGS} -o $@.so $<
-
-c_kernellib: ${SRCDIR}/kernel.cpp
-	${CC} ${C_FLAGS} -o $@.so $<
-
-f_enterdatalib: ${SRCDIR}/enterdata.F90
-	${FC} ${F_FLAGS} -o $@.so $<
-
-f_exitdatalib: ${SRCDIR}/exitdata.F90
-	${FC} ${F_FLAGS} -o $@.so $<
-
-f_kernellib: ${SRCDIR}/kernel.F90
-	${FC} ${F_FLAGS} -o $@.so $<
 
 debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}
 
+fort: ${FORTSRC}
+	${FC} ${F_FLAGS} -o miniweather_fort.exe $<
+
 clean:
-	rm -rf *.so core *.mod .jaitmp *.o *.s
+	rm -rf *.so core *.mod .jaitmp *.o *.s miniweather_fort.exe output.nc
