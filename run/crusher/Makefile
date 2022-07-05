@@ -5,6 +5,10 @@ SIM_TIME := 400.0
 OUT_FREQ := 100.0
 NX := 100 
 NZ := 50
+#SIM_TIME := 10.0
+#OUT_FREQ := 10.0
+#NX := 640 
+#NZ := 100
 
 DATA_SPEC_COLLISION       := 1
 DATA_SPEC_THERMAL         := 2
@@ -16,11 +20,12 @@ DATA_SPEC_INJECTION       := 6
 #DATA := ${DATA_SPEC_COLLISION}
 DATA := ${DATA_SPEC_THERMAL}
 
-JULIA := julia --project=.
+#JULIA := julia --project=.
+JULIA := julia --project=/ccs/home/grnydawn/repos/github/jlweather/run/crusher
 SRCDIR :=../../src
 SRC := ${SRCDIR}/miniWeather_mpi.jl
-#ARGS := ${SIM_TIME} ${NX} ${NZ} ${OUT_FREQ} ${DATA}
-ARGS := 
+ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA}
+#ARGS := 
 
 CC := cc
 CXX := CC
@@ -55,4 +60,4 @@ debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}
 
 clean:
-	rm -f *.so core *.mod
+	rm -rf *.so core *.mod .jaitmp *.o *.s

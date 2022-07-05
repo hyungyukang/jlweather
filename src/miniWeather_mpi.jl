@@ -1,18 +1,16 @@
-
-include("./AccelInterfaces.jl")
-#using  .AccelInterfaces
-
-import .AccelInterfaces.AccelInfo,
-       .AccelInterfaces.KernelInfo,
-       .AccelInterfaces.allocate!,
-       .AccelInterfaces.deallocate!,
-       .AccelInterfaces.copyin!,
-       .AccelInterfaces.copyout!,
-       .AccelInterfaces.launch!,
-       .AccelInterfaces.get_accel!,
-       .AccelInterfaces.get_kernel!,
-       .AccelInterfaces.FLANG,
-       .AccelInterfaces.CLANG
+using AccelInterfaces
+#import AccelInterfaces.AccelType,
+#       AccelInterfaces.FLANG,
+#       AccelInterfaces.CLANG,
+#       AccelInterfaces.AccelInfo,
+#       AccelInterfaces.KernelInfo,
+#       AccelInterfaces.allocate!,
+#       AccelInterfaces.deallocate!,
+#       AccelInterfaces.copyin!,
+#       AccelInterfaces.copyout!,
+#       AccelInterfaces.launch!,
+#       AccelInterfaces.get_accel!,
+#       AccelInterfaces.get_kernel!
 
 import OffsetArrays.OffsetArray,
        OffsetArrays.OffsetVector
@@ -20,6 +18,8 @@ import OffsetArrays.OffsetArray,
 import ArgParse.ArgParseSettings,
        ArgParse.parse_args,
        ArgParse.@add_arg_table!
+
+import NCDatasets: Dataset
 
 import Match.@match
 
@@ -46,8 +46,7 @@ import Libdl
 
 const PATH_DATALIB = joinpath(@__DIR__, "dlib.so") 
 const PATH_KERNELLIB = joinpath(@__DIR__, "klib.so") 
-#const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl") 
-const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.F90") 
+const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl") 
 
 ##############
 # constants
@@ -185,15 +184,10 @@ function main(args::Vector{String})
     local dt = DT
     local nt = Int(1)
           
+    compile_fopenacc_cray = "ftn -shared -fPIC -h acc,noomp"
     compile_f_gnu = "gfortran -fPIC -shared"
-
-    #accel  = AccelInfo(CLANG, ismaster=MASTERPROC)
-    #accel  = AccelInfo(FLANG, ismaster=MASTERPROC)
-
-    #launch!(accel, reduce_kernel, NX, NZ, DX, DZ, HS, NUM_VARS, state,
-    #               hy_dens_cell, hy_dens_theta_cell, C0, GAMMA,
-    #               P0, RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM,
-    #               ID_RHOT, intentout=(glob,), compile=compile_f_gnu)
+    compile = compile_fopenacc_cray
+    #compile = compile_f_gnu
 
     constvars = (NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0,
                 RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT)
@@ -201,8 +195,9 @@ function main(args::Vector{String})
     constnames = ("NX", "NZ", "DX", "DZ", "HS", "NUM_VARS", "C0", "GAMMA", "P0",
                     "RD", "CP", "CV", "ID_DENS", "ID_UMOM", "ID_WMOM", "ID_RHOT")
 
-    accel = get_accel!(FLANG, ismaster=MASTERPROC, constvars=constvars, compile=compile_f_gnu,
+    accel = get_accel!(JAI_FORTRAN_OPENACC, ismaster=MASTERPROC, constvars=constvars, compile=compile,
                         constnames=constnames)
+
 
     reduce_kernel = get_kernel!(accel, PATH_REDUCTION_KERNEL)
 
@@ -211,8 +206,12 @@ function main(args::Vector{String})
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
             sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
+    innames = ("hy_dens_cell", "hy_dens_theta_cell")
+	copyin!(reduce_kernel, hy_dens_cell, hy_dens_theta_cell, names=innames)
+
     #Initial reductions for mass, kinetic energy, and total energy
-    local mass0, te0 = reductions(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+    local mass0, te0 = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+    #local mass0, te0 = reductions_julia(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
 
     #Output the initial state
     # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
@@ -242,18 +241,18 @@ function main(args::Vector{String})
           output_counter = output_counter - OUT_FREQ
         end
 
-        #println('  ',etime,'   ',minimum(state),'   ',maximum(state))
-        #@printf("%.14f     %.14f     %.14f \n",etime,minimum(state),maximum(state))
+        #println("SUM(state) = ", sum(state))
     end
 
-    local mass, te = reductions(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+    local mass, te = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+    #local mass, te = reductions_julia(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
     
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
         @printf("d_mass: %f\n", (mass - mass0)/mass0)
         @printf("d_te:   %f\n", (te - te0)/te0)
     end
-        
+
     finalize!(state)
 
 end
@@ -839,8 +838,8 @@ function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
 
 
 end
-            
-function reductions(reduce_kernel::KernelInfo,
+
+function reductions_julia(reduce_kernel::KernelInfo,
                     state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
@@ -848,37 +847,44 @@ function reductions(reduce_kernel::KernelInfo,
     local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
 
-	allocate!(reduce_kernel, glob, state, hy_dens_cell, hy_dens_theta_cell)
-	copyin!(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+      
+    for k in 1:NZ
+        for i in 1:NX
+            r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
+            u  =   state[i,k,ID_UMOM] / r                           # U-wind
+            w  =   state[i,k,ID_WMOM] / r                           # W-wind
+            th = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / r # Potential Temperature (theta)
+            p  = C0*(r*th)^GAMMA      # Pressure
+            t  = th / (P0/p)^(RD/CP)  # Temperature
+            ke = r*(u*u+w*w)          # Kinetic Energy
+            ie = r*CV*t               # Internal Energy
+            mass = mass + r            *DX*DZ # Accumulate domain mass
+            te   = te   + (ke + r*CV*t)*DX*DZ # Accumulate domain total energy
+        end
+    end
+    
+    Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
+    
+    return glob
+end
+
+function reductions_accel(reduce_kernel::KernelInfo,
+                    state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
+    
+    local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
+    glob = Array{Float64}(undef, 2)
+
+    innames = ("state", "hy_dens_cell", "hy_dens_theta_cell")
+
+	copyin!(reduce_kernel, state, names=("state",))
 
     launch!(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell,
-            outvars=(glob,), innames=("state", "hy_dens_cell", "hy_dens_theta_cell"),
-            outnames=("glob",))
+            outvars=(glob,), innames=innames, outnames=("glob",))
 
     mass = glob[1]
     te = glob[2]
-
-    println("MASS0: ", mass, te)
-
-	copyout!(reduce_kernel, glob)
-	deallocate!(reduce_kernel, glob, state, hy_dens_cell, hy_dens_theta_cell)
-#      
-#    for k in 1:NZ
-#        for i in 1:NX
-#            r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
-#            u  =   state[i,k,ID_UMOM] / r                           # U-wind
-#            w  =   state[i,k,ID_WMOM] / r                           # W-wind
-#            th = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / r # Potential Temperature (theta)
-#            p  = C0*(r*th)^GAMMA      # Pressure
-#            t  = th / (P0/p)^(RD/CP)  # Temperature
-#            ke = r*(u*u+w*w)          # Kinetic Energy
-#            ie = r*CV*t               # Internal Energy
-#            mass = mass + r            *DX*DZ # Accumulate domain mass
-#            te   = te   + (ke + r*CV*t)*DX*DZ # Accumulate domain total energy
-#        end
-#    end
-#    
-#    println("MASS1: ", mass, te)
 
     Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
     
@@ -894,11 +900,9 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
 
     var_local  = zeros(Float64, NX, NZ, NUM_VARS)
 
-    println("OUTPUT IN", MYRANK)
-
-    #if MASTERPROC
-    var_global  = zeros(Float64, NX_GLOB, NZ_GLOB, NUM_VARS)
-    #end
+    if MASTERPROC
+       var_global  = zeros(Float64, NX_GLOB, NZ_GLOB, NUM_VARS)
+    end
 
     #Store perturbed values in the temp arrays for output
     for k in 1:NZ
@@ -911,16 +915,32 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         end
     end
 
-   #Gather data from multiple CPUs
-    for ll in 1:NUM_VARS
-        if MASTERPROC
-           var_global[I_BEG:I_END,:,ll] = var_local[:,:,ll]
-        else
-           Gather!(var_local[:,:,ll],var_global[I_BEG:I_END,:,ll],MASTERPROC,COMM)
-        end
+    #Gather data from multiple CPUs
+    #  - Implemented in an inefficient way for the purpose of tests
+    #  - Will be improved in next version.
+    if MASTERPROC
+       ibeg_chunk = zeros(Int,NRANKS)
+       iend_chunk = zeros(Int,NRANKS)
+       nchunk     = zeros(Int,NRANKS)
+       for n in 1:NRANKS
+          ibeg_chunk[n] = trunc(Int, round(NPER* (n-1))+1)
+          iend_chunk[n] = trunc(Int, round(NPER*((n-1)+1)))
+          nchunk[n]     = iend_chunk[n] - ibeg_chunk[n] + 1
+       end
     end
 
-    println("OUTPUT MID", MYRANK)
+    if MASTERPROC
+       var_global[I_BEG:I_END,:,:] = var_local[:,:,:]
+       if NRANKS > 1
+          for i in 2:NRANKS
+              var_local = Array{Float64}(undef, nchunk[i],NZ,NUM_VARS)
+              status = MPI.Recv!(var_local,i-1,0,COMM)
+              var_global[ibeg_chunk[i]:iend_chunk[i],:,:] = var_local[:,:,:]
+          end
+       end
+    else
+       MPI.Send(var_local,MASTERRANK,0,COMM)
+    end
 
     # Write output only in MASTER
     if MASTERPROC
@@ -954,6 +974,7 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
 
           # Open NetCDF output file with an append mode
           ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","a")
+          #ds = Dataset("output.nc","a")
 
           nc_var = ds["t"]
           nc_var[nt] = etime
@@ -971,9 +992,97 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
 
        end # etime
     end # MASTER
-
-    println("OUTPUT OUT", MYRANK)
 end
+
+##Output the fluid state (state) to a NetCDF file at a given elapsed model time (etime)
+#function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+#                etime::Float64,
+#                nt::Int,
+#                hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+#                hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
+#
+#    var_local  = zeros(Float64, NX, NZ, NUM_VARS)
+#
+#    println("OUTPUT IN", MYRANK)
+#
+#    #if MASTERPROC
+#    var_global  = zeros(Float64, NX_GLOB, NZ_GLOB, NUM_VARS)
+#    #end
+#
+#    #Store perturbed values in the temp arrays for output
+#    for k in 1:NZ
+#        for i in 1:NX
+#            var_local[i,k,ID_DENS]  = state[i,k,ID_DENS]
+#            var_local[i,k,ID_UMOM]  = state[i,k,ID_UMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+#            var_local[i,k,ID_WMOM]  = state[i,k,ID_WMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+#            var_local[i,k,ID_RHOT] = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+#                         - hy_dens_theta_cell[k] / hy_dens_cell[k]
+#        end
+#    end
+#
+#   #Gather data from multiple CPUs
+#    for ll in 1:NUM_VARS
+#        if MASTERPROC
+#           var_global[I_BEG:I_END,:,ll] = var_local[:,:,ll]
+#        else
+#           Gather!(var_local[:,:,ll],var_global[I_BEG:I_END,:,ll],MASTERPROC,COMM)
+#        end
+#    end
+#
+#    println("OUTPUT MID", MYRANK)
+#
+#    # Write output only in MASTER
+#    if MASTERPROC
+#
+#       #If the elapsed time is zero, create the file. Otherwise, open the file
+#       if ( etime == 0.0 )
+#
+#          # Open NetCDF output file with a create mode
+#          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","c")
+#          #ds = Dataset("output.nc","c")
+#
+#          defDim(ds,"t",Inf)
+#          defDim(ds,"x",NX_GLOB)
+#          defDim(ds,"z",NZ_GLOB)
+#
+#          nc_var = defVar(ds,"t",Float64,("t",))
+#          nc_var[nt] = etime
+#          nc_var = defVar(ds,"dens",Float64,("x","z","t"))
+#          nc_var[:,:,nt] = var_global[:,:,ID_DENS]
+#          nc_var = defVar(ds,"uwnd",Float64,("x","z","t"))
+#          nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
+#          nc_var = defVar(ds,"wwnd",Float64,("x","z","t"))
+#          nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
+#          nc_var = defVar(ds,"theta",Float64,("x","z","t"))
+#          nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+#
+#          # Close NetCDF file
+#          close(ds)
+#
+#       else
+#
+#          # Open NetCDF output file with an append mode
+#          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","a")
+#
+#          nc_var = ds["t"]
+#          nc_var[nt] = etime
+#          nc_var = ds["dens"]
+#          nc_var[:,:,nt] = var_global[:,:,ID_DENS]
+#          nc_var = ds["uwnd"]
+#          nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
+#          nc_var = ds["wwnd"]
+#          nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
+#          nc_var = ds["theta"]
+#          nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+#
+#          # Close NetCDF file
+#          close(ds)
+#
+#       end # etime
+#    end # MASTER
+#
+#    println("OUTPUT OUT", MYRANK)
+#end
 
 function finalize!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
 

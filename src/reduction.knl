@@ -1,23 +1,12 @@
+[fortran, fortran_openacc]
 
-[fortran]
-
-INTEGER (C_INT64_T) FUNCTION runkernel() BIND(C, name="runkernel")
-	USE, INTRINSIC :: ISO_C_BINDING
-
-	print *, "Hello World!"
-
-END FUNCTION
-# Compute reduced quantities for error checking without resorting to the "ncdiff" tool
-[flang]
-  subroutine reductions( mass , te )
-    implicit none
-    real(rp), intent(out) :: mass, te
     integer :: i, k, ierr
-    real(rp) :: r,u,w,th,p,t,ke,ie
-    real(rp) :: glob(2)
-    mass = 0
-    te   = 0
-    !$acc parallel loop collapse(2) reduction(+:mass,te)
+    real(C_DOUBLE) :: r,u,w,th,p,t,ke,ie, mass, te
+
+	mass = 0.
+	te = 0.
+
+    !$acc parallel loop collapse(2) reduction(+:mass,te) present(state, hy_dens_cell, hy_dens_theta_cell) 
     do k = 1 , nz
       do i = 1 , nx
         r  =   state(i,k,ID_DENS) + hy_dens_cell(k)             ! Density
@@ -32,8 +21,6 @@ END FUNCTION
         te   = te   + (ke + r*cv*t)*dx*dz ! Accumulate domain total energy
       enddo
     enddo
-    call mpi_allreduce((/mass,te/),glob,2,MPI_REAL8,MPI_SUM,MPI_COMM_WORLD,ierr)
-    mass = glob(1)
-    te   = glob(2)
-  end subroutine reductions
 
+	glob(1) = mass
+	glob(2) = te
