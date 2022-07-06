@@ -1,16 +1,6 @@
 using AccelInterfaces
-#import AccelInterfaces.AccelType,
-#       AccelInterfaces.FLANG,
-#       AccelInterfaces.CLANG,
-#       AccelInterfaces.AccelInfo,
-#       AccelInterfaces.KernelInfo,
-#       AccelInterfaces.allocate!,
-#       AccelInterfaces.deallocate!,
-#       AccelInterfaces.copyin!,
-#       AccelInterfaces.copyout!,
-#       AccelInterfaces.launch!,
-#       AccelInterfaces.get_accel!,
-#       AccelInterfaces.get_kernel!
+
+import Profile
 
 import OffsetArrays.OffsetArray,
        OffsetArrays.OffsetVector
@@ -44,9 +34,14 @@ import Libdl
 # Accelerators
 ##############
 
-const PATH_DATALIB = joinpath(@__DIR__, "dlib.so") 
-const PATH_KERNELLIB = joinpath(@__DIR__, "klib.so") 
+const COMPILE_FOPENACC_CRAY = "ftn -shared -fPIC -h acc,noomp"
+const COMPILE_FORTRAN = "ftn -fPIC -shared"
+const COMPILE = COMPILE_FOPENACC_CRAY
+#const COMPILE = COMPILE_FORTRAN
+#const COMPILE = nothing
+
 const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl") 
+const PATH_TEND_Z_KERNEL = joinpath(@__DIR__, "tend_z.knl") 
 
 ##############
 # constants
@@ -183,11 +178,6 @@ function main(args::Vector{String})
     local output_counter = Float64(0.0)
     local dt = DT
     local nt = Int(1)
-          
-    compile_fopenacc_cray = "ftn -shared -fPIC -h acc,noomp"
-    compile_f_gnu = "gfortran -fPIC -shared"
-    compile = compile_fopenacc_cray
-    #compile = compile_f_gnu
 
     constvars = (NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0,
                 RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT)
@@ -195,23 +185,35 @@ function main(args::Vector{String})
     constnames = ("NX", "NZ", "DX", "DZ", "HS", "NUM_VARS", "C0", "GAMMA", "P0",
                     "RD", "CP", "CV", "ID_DENS", "ID_UMOM", "ID_WMOM", "ID_RHOT")
 
-    accel = get_accel!(JAI_FORTRAN_OPENACC, ismaster=MASTERPROC, constvars=constvars, compile=compile,
+    accel = get_accel!(JAI_FORTRAN_OPENACC, ismaster=MASTERPROC, constvars=constvars, compile=COMPILE,
                         constnames=constnames)
 
-
     reduce_kernel = get_kernel!(accel, PATH_REDUCTION_KERNEL)
+    tend_z_kernel = get_kernel!(accel, PATH_TEND_Z_KERNEL)
 
     #Initialize the grid and the data  
     (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
             sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
-    innames = ("hy_dens_cell", "hy_dens_theta_cell")
-	copyin!(reduce_kernel, hy_dens_cell, hy_dens_theta_cell, names=innames)
+    allocnames = ("state", "statetmp", "flux", "tend", "hy_dens_cell", "hy_dens_theta_cell",
+				"hy_dens_int", "hy_dens_theta_int", "hy_pressure_int")
+	allocate!(reduce_kernel, state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
+			hy_dens_int, hy_dens_theta_int, hy_pressure_int, names=allocnames)
+
+	# NOTE: add filename and line # to generate hash of jai functions
+
+    updatedevnames = ("hy_dens_cell", "hy_dens_theta_cell")
+	update!(JAI_DEVICE, reduce_kernel, hy_dens_cell, hy_dens_theta_cell, names=updatedevnames)
 
     #Initial reductions for mass, kinetic energy, and total energy
-    local mass0, te0 = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
-    #local mass0, te0 = reductions_julia(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+
+	if !(COMPILE == nothing) 
+		local mass0, te0 = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+	else
+		local mass0, te0 = reductions_julia(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+	end
+
 
     #Output the initial state
     # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
@@ -225,7 +227,7 @@ function main(args::Vector{String})
         end
 
         #Perform a single time step
-        timestep!(state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
+        Profile.@profile timestep!(tend_z_kernel, state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
                   sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
                   hy_dens_int, hy_dens_theta_int, hy_pressure_int)
 
@@ -244,9 +246,17 @@ function main(args::Vector{String})
         #println("SUM(state) = ", sum(state))
     end
 
-    local mass, te = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
-    #local mass, te = reductions_julia(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
-    
+	Profile.print()
+
+	if !(COMPILE == nothing) 
+		local mass, te = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+	else
+		local mass, te = reductions_julia(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+	end
+ 
+ 	deallocate!(reduce_kernel, state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
+			hy_dens_int, hy_dens_theta_int, hy_pressure_int, names=allocnames)
+  
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
         @printf("d_mass: %f\n", (mass - mass0)/mass0)
@@ -499,7 +509,8 @@ end
 # q*     = q[n] + dt/3 * rhs(q[n])
 # q**    = q[n] + dt/2 * rhs(q*  )
 # q[n+1] = q[n] + dt/1 * rhs(q** )
-function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+function timestep!(tend_z_kernel::KernelInfo,
+				   state::OffsetArray{Float64, 3, Array{Float64, 3}},
                    statetmp::OffsetArray{Float64, 3, Array{Float64, 3}},
                    flux::Array{Float64, 3},
                    tend::Array{Float64, 3},
@@ -519,56 +530,56 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     if direction_switch
         
         #x-direction first
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel, state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
         #z-direction second
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
     else
         
         #z-direction second
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
         #x-direction first
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
     end
@@ -579,7 +590,8 @@ end
 #Perform a single semi-discretized step in time with the form:
 #state_out = state_init + dt * rhs(state_forcing)
 #Meaning the step starts from state_init, computes the rhs using state_forcing, and stores the result in state_out
-function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3}},
+function semi_discrete_step!(tend_z_kernel::KernelInfo,
+					stateinit::OffsetArray{Float64, 3, Array{Float64, 3}},
                     stateforcing::OffsetArray{Float64, 3, Array{Float64, 3}},
                     stateout::OffsetArray{Float64, 3, Array{Float64, 3}},
                     dt::Float64,
@@ -610,8 +622,17 @@ function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3
         set_halo_values_z!(stateforcing, hy_dens_cell, hy_dens_theta_cell)
         
         #Compute the time tendencies for the fluid state in the z-direction
-        compute_tendencies_z!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
+		if !(COMPILE == nothing) 
+            compute_tendencies_z_accel!(tend_z_kernel, stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
                             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+
+            #compute_tendencies_z_julia!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
+            #                hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+		else
+            compute_tendencies_z_julia!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
+                            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+
+		end
 
         
     end
@@ -771,8 +792,32 @@ function set_halo_values_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     end
 
 end
-        
-function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+
+function compute_tendencies_z_accel!(tend_z_kernel::KernelInfo,
+					state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    flux::Array{Float64, 3},
+                    tend::Array{Float64, 3},
+                    dt::Float64,
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_int::Vector{Float64},
+                    hy_dens_theta_int::Vector{Float64},
+                    hy_pressure_int::Vector{Float64})
+
+	update!(JAI_DEVICE, tend_z_kernel, state, names=("state",))
+
+    innames = ("state", "dt", "hy_dens_cell", "hy_dens_theta_cell",
+			"hy_dens_int", "hy_dens_theta_int", "hy_pressure_int")
+
+    launch!(tend_z_kernel, state, dt, hy_dens_cell, hy_dens_theta_cell,
+			hy_dens_int, hy_dens_theta_int, hy_pressure_int,
+            outvars=(flux, tend,), innames=innames, outnames=("flux", "tend",))
+
+	update!(JAI_HOST, tend_z_kernel, tend, names=("tend",))
+
+end
+       
+function compute_tendencies_z_julia!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     flux::Array{Float64, 3},
                     tend::Array{Float64, 3},
                     dt::Float64,
@@ -873,12 +918,13 @@ function reductions_accel(reduce_kernel::KernelInfo,
                     hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
     
-    local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
+    local mass = zero(Float64)
+    local te = zero(Float64)
     glob = Array{Float64}(undef, 2)
 
     innames = ("state", "hy_dens_cell", "hy_dens_theta_cell")
 
-	copyin!(reduce_kernel, state, names=("state",))
+	update!(JAI_DEVICE, reduce_kernel, state, names=("state",))
 
     launch!(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell,
             outvars=(glob,), innames=innames, outnames=("glob",))

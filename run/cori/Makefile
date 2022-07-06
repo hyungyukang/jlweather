@@ -1,5 +1,6 @@
 
-SIM_TIME := 400.0
+#SIM_TIME := 400.0
+SIM_TIME := 10.0
 OUT_FREQ := 100.0
 NX := 100 
 NZ := 50
