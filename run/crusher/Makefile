@@ -1,7 +1,8 @@
 # example command: jsrun  -n 2 -- make
 # example command: srun  -n 2 -- make
 
-SIM_TIME := 400.0
+#SIM_TIME := 400.0
+SIM_TIME := 50.0
 OUT_FREQ := 100.0
 NX := 100 
 NZ := 50
