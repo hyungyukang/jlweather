@@ -48,7 +48,7 @@ const PATH_TEND_Z_KERNEL = joinpath(@__DIR__, "tend_z.knl")
 ##############
     
 # julia command to link MPI.jl to system MPI installation
-# julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/opt/cray/pe/mpich/8.1.16/ofi/crayclang/10.0"; using Pkg; Pkg.build("MPI"; verbose=true)'
+# julia --project=. -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/opt/cray/pe/mpich/8.1.16/ofi/crayclang/10.0"; using Pkg; Pkg.build("MPI"; verbose=true)'
 # MPI.install_mpiexecjl()
 
 Init()
@@ -179,11 +179,12 @@ function main(args::Vector{String})
     local dt = DT
     local nt = Int(1)
 
-    constvars = (NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0,
-                RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT)
+    constvars = (NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0, HV_BETA, GRAV,
+                RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, STEN_SIZE)
 
-    constnames = ("NX", "NZ", "DX", "DZ", "HS", "NUM_VARS", "C0", "GAMMA", "P0",
-                    "RD", "CP", "CV", "ID_DENS", "ID_UMOM", "ID_WMOM", "ID_RHOT")
+    constnames = ("NX", "NZ", "DX", "DZ", "HS", "NUM_VARS", "C0", "GAMMA",
+                "P0", "HV_BETA", "GRAV", "RD", "CP", "CV", "ID_DENS",
+                "ID_UMOM", "ID_WMOM", "ID_RHOT", "STEN_SIZE")
 
     accel = get_accel!(JAI_FORTRAN_OPENACC, ismaster=MASTERPROC, constvars=constvars, compile=COMPILE,
                         constnames=constnames)
@@ -203,8 +204,12 @@ function main(args::Vector{String})
 
 	# NOTE: add filename and line # to generate hash of jai functions
 
-    updatedevnames = ("hy_dens_cell", "hy_dens_theta_cell")
-	update!(JAI_DEVICE, reduce_kernel, hy_dens_cell, hy_dens_theta_cell, names=updatedevnames)
+    updatedevnames = ("hy_dens_cell", "hy_dens_theta_cell", "hy_dens_int",
+                        "hy_dens_theta_int", "hy_pressure_int"
+)
+	update!(JAI_DEVICE, reduce_kernel, hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int, names=updatedevnames)
+
 
     #Initial reductions for mass, kinetic energy, and total energy
 
@@ -227,7 +232,8 @@ function main(args::Vector{String})
         end
 
         #Perform a single time step
-        Profile.@profile timestep!(tend_z_kernel, state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
+        #Profile.@profile timestep!(tend_z_kernel, state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
+        timestep!(tend_z_kernel, state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
                   sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
                   hy_dens_int, hy_dens_theta_int, hy_pressure_int)
 
@@ -246,7 +252,7 @@ function main(args::Vector{String})
         #println("SUM(state) = ", sum(state))
     end
 
-	Profile.print()
+	#Profile.print()
 
 	if !(COMPILE == nothing) 
 		local mass, te = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
@@ -892,7 +898,6 @@ function reductions_julia(reduce_kernel::KernelInfo,
     local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
 
-      
     for k in 1:NZ
         for i in 1:NX
             r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
