@@ -13,7 +13,16 @@ import NCDatasets: Dataset
 
 import Match.@match
 
-import MPI
+import MPI.Init,
+       MPI.COMM_WORLD,
+       MPI.Comm_rank,
+       MPI.Comm_size,
+       MPI.Allreduce!,
+       MPI.Barrier,
+       MPI.Waitall!,
+       MPI.Request,
+       MPI.Irecv!,
+       MPI.Isend
 
 import Debugger
 
@@ -21,17 +30,31 @@ import Printf.@printf
 
 import Libdl
 
+##############
+# Accelerators
+##############
+
+const COMPILE_FOPENACC_CRAY = "ftn -shared -fPIC -h acc,noomp"
+const COMPILE_FORTRAN = "ftn -fPIC -shared"
+const COMPILE = COMPILE_FOPENACC_CRAY
+#const COMPILE = COMPILE_FORTRAN
+#const COMPILE = nothing
+
+const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl") 
+const PATH_TEND_Z_KERNEL = joinpath(@__DIR__, "tend_z.knl") 
 
 ##############
 # constants
 ##############
     
 # julia command to link MPI.jl to system MPI installation
-# julia -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/Users/8yk/opt/usr/local"; using Pkg; Pkg.build("MPI"; verbose=true)'
-MPI.Init()
-const COMM   = MPI.COMM_WORLD
-const NRANKS = MPI.Comm_size(COMM)
-const MYRANK = MPI.Comm_rank(COMM)
+# julia --project=. -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/opt/cray/pe/mpich/8.1.16/ofi/crayclang/10.0"; using Pkg; Pkg.build("MPI"; verbose=true)'
+# MPI.install_mpiexecjl()
+
+Init()
+const COMM   = COMM_WORLD
+const NRANKS = Comm_size(COMM)
+const MYRANK = Comm_rank(COMM)
 
 s = ArgParseSettings()
 @add_arg_table! s begin
@@ -63,6 +86,20 @@ const NX_GLOB     = parsed_args["nx"]
 const NZ_GLOB     = parsed_args["nz"]
 const OUT_FREQ    = parsed_args["outfreq"]
 const DATA_SPEC   = parsed_args["dataspec"]
+
+#if length(ARGS) >= 5
+#    const SIM_TIME    = parse(Float64, ARGS[1])
+#    const NX_GLOB     = parse(Int64, ARGS[2])
+#    const NZ_GLOB     = parse(Int64, ARGS[3])
+#    const OUT_FREQ    = parse(Float64, ARGS[4])
+#    const DATA_SPEC   = parse(Int64, ARGS[5])
+#else
+#    const SIM_TIME    = Float64(100.0)
+#    const NX_GLOB     = Int64(200)
+#    const NZ_GLOB     = Int64(100)
+#    const OUT_FREQ    = Float64(100.0)
+#    const DATA_SPEC   = Int64(1)
+#end
     
 const NPER  = Float64(NX_GLOB)/NRANKS
 const I_BEG = trunc(Int, round(NPER* MYRANK)+1)
@@ -75,8 +112,7 @@ const RIGHT_RANK = MYRANK+1 == NRANKS ? 0 : MYRANK + 1
 
 #Vertical direction isn't MPI-ized, so the rank's local values = the global values
 const K_BEG       = 1
-const MASTERRANK  = 0
-const MASTERPROC  = (MYRANK == MASTERRANK)
+const MASTERPROC  = (MYRANK == 0)
 
 const HS          = 2
 const STEN_SIZE   = 4 #Size of the stencil used for interpolation
@@ -116,7 +152,6 @@ const DATA_SPEC_INJECTION       = 6
 const qpoints     = Array{Float64}([0.112701665379258311482073460022E0 , 0.500000000000000000000000000000E0 , 0.887298334620741688517926539980E0])
 const qweights    = Array{Float64}([0.277777777777777777777777777779E0 , 0.444444444444444444444444444444E0 , 0.277777777777777777777777777779E0])
 
-
 ##############
 # functions
 ##############
@@ -144,20 +179,48 @@ function main(args::Vector{String})
     local dt = DT
     local nt = Int(1)
 
-  
+    constvars = (NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0, HV_BETA, GRAV,
+                RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, STEN_SIZE)
+
+    constnames = ("NX", "NZ", "DX", "DZ", "HS", "NUM_VARS", "C0", "GAMMA",
+                "P0", "HV_BETA", "GRAV", "RD", "CP", "CV", "ID_DENS",
+                "ID_UMOM", "ID_WMOM", "ID_RHOT", "STEN_SIZE")
+
+    accel = get_accel(JAI_FORTRAN_OPENACC, ismaster=MASTERPROC, constvars=constvars, compile=COMPILE,
+                        constnames=constnames)
+
+    reduce_kernel = get_kernel(accel, PATH_REDUCTION_KERNEL)
+    tend_z_kernel = get_kernel(accel, PATH_TEND_Z_KERNEL)
+
     #Initialize the grid and the data  
     (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
             sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
-    #Initial reductions for mass, kinetic energy, and total energy
-    local mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
+    #allocnames = ("state", "statetmp", "flux", "tend", "hy_dens_cell", "hy_dens_theta_cell",
+    #				"hy_dens_int", "hy_dens_theta_int", "hy_pressure_int")
+	@jenterdata accel allocate(state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
+			hy_dens_int, hy_dens_theta_int, hy_pressure_int)
 
-    #println(state[:,:,ID_DENS])
+	# NOTE: add filename and line # to generate hash of jai functions
+
+    #updatedevnames = ("hy_dens_cell", "hy_dens_theta_cell", "hy_dens_int",
+    #                    "hy_dens_theta_int", "hy_pressure_int")
+	@jenterdata accel update(hy_dens_cell, hy_dens_theta_cell,
+            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+
+
+    #Initial reductions for mass, kinetic energy, and total energy
+
+	if !(COMPILE == nothing) 
+		local mass0, te0 = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+	else
+		local mass0, te0 = reductions_julia(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+	end
+
 
     #Output the initial state
-    #output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
-
+    # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
     
     # main loop
     elapsedtime = @elapsed while etime < SIM_TIME
@@ -168,9 +231,16 @@ function main(args::Vector{String})
         end
 
         #Perform a single time step
-        timestep!(state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
-                  sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
-                  hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        if MASTERPROC
+            #Profile.@profile timestep!(tend_z_kernel, state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
+            timestep!(tend_z_kernel, state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
+                      sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+                      hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        else
+            timestep!(tend_z_kernel, state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
+                      sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
+                      hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+        end
 
         #Update the elapsed time and output counter
         etime = etime + dt
@@ -180,20 +250,32 @@ function main(args::Vector{String})
         if (output_counter >= OUT_FREQ)
           #Increment the number of outputs
           nt = nt + 1
-          #output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
+          # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
           output_counter = output_counter - OUT_FREQ
         end
 
+        #println("SUM(state) = ", sum(state))
     end
 
-    local mass, te = reductions(state, hy_dens_cell, hy_dens_theta_cell)
-    
+    if MASTERPROC
+	    #Profile.print()
+    end
+
+	if !(COMPILE == nothing) 
+		local mass, te = reductions_accel(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+	else
+		local mass, te = reductions_julia(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell)
+	end
+ 
+ 	@jexitdata accel deallocate(state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
+			hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+  
     if MASTERPROC
         println( "CPU Time: $elapsedtime")
         @printf("d_mass: %f\n", (mass - mass0)/mass0)
         @printf("d_te:   %f\n", (te - te0)/te0)
     end
-        
+
     finalize!(state)
 
 end
@@ -208,7 +290,7 @@ function init!()
         
     #println("nx, nz at $MYRANK: $NX($I_BEG:$I_END) $NZ($K_BEG:$NZ)")
     
-    MPI.Barrier(COMM)
+    Barrier(COMM)
     
     _state      = zeros(Float64, NX+2*HS, NZ+2*HS, NUM_VARS) 
     state       = OffsetArray(_state, 1-HS:NX+HS, 1-HS:NZ+HS, 1:NUM_VARS)
@@ -440,7 +522,8 @@ end
 # q*     = q[n] + dt/3 * rhs(q[n])
 # q**    = q[n] + dt/2 * rhs(q*  )
 # q[n+1] = q[n] + dt/1 * rhs(q** )
-function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+function timestep!(tend_z_kernel::KernelInfo,
+				   state::OffsetArray{Float64, 3, Array{Float64, 3}},
                    statetmp::OffsetArray{Float64, 3, Array{Float64, 3}},
                    flux::Array{Float64, 3},
                    tend::Array{Float64, 3},
@@ -460,56 +543,56 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     if direction_switch
         
         #x-direction first
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel, state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
         #z-direction second
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
     else
         
         #z-direction second
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
         #x-direction first
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
+        semi_discrete_step!(tend_z_kernel,  state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
     end
@@ -520,7 +603,8 @@ end
 #Perform a single semi-discretized step in time with the form:
 #state_out = state_init + dt * rhs(state_forcing)
 #Meaning the step starts from state_init, computes the rhs using state_forcing, and stores the result in state_out
-function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3}},
+function semi_discrete_step!(tend_z_kernel::KernelInfo,
+					stateinit::OffsetArray{Float64, 3, Array{Float64, 3}},
                     stateforcing::OffsetArray{Float64, 3, Array{Float64, 3}},
                     stateout::OffsetArray{Float64, 3, Array{Float64, 3}},
                     dt::Float64,
@@ -551,8 +635,17 @@ function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3
         set_halo_values_z!(stateforcing, hy_dens_cell, hy_dens_theta_cell)
         
         #Compute the time tendencies for the fluid state in the z-direction
-        compute_tendencies_z!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
+		if !(COMPILE == nothing) 
+            compute_tendencies_z_accel!(tend_z_kernel, stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
                             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+
+            #compute_tendencies_z_julia!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
+            #                hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+		else
+            compute_tendencies_z_julia!(stateforcing,flux,tend,dt, hy_dens_cell, hy_dens_theta_cell,
+                            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+
+		end
 
         
     end
@@ -578,13 +671,13 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
 
 
-    local req_r = Vector{MPI.Request}(undef, 2)
-    local req_s = Vector{MPI.Request}(undef, 2)
+    local req_r = Vector{Request}(undef, 2)
+    local req_s = Vector{Request}(undef, 2)
 
     
     #Prepost receives
-    req_r[1] = MPI.Irecv!(recvbuf_l, LEFT_RANK,0,COMM)
-    req_r[2] = MPI.Irecv!(recvbuf_r,RIGHT_RANK,1,COMM)
+    req_r[1] = Irecv!(recvbuf_l, LEFT_RANK,0,COMM)
+    req_r[2] = Irecv!(recvbuf_r,RIGHT_RANK,1,COMM)
 
     #Pack the send buffers
     for ll in 1:NUM_VARS
@@ -597,11 +690,11 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     end
 
     #Fire off the sends
-    req_s[1] = MPI.Isend(sendbuf_l, LEFT_RANK,1,COMM)
-    req_s[2] = MPI.Isend(sendbuf_r,RIGHT_RANK,0,COMM)
+    req_s[1] = Isend(sendbuf_l, LEFT_RANK,1,COMM)
+    req_s[2] = Isend(sendbuf_r,RIGHT_RANK,0,COMM)
 
     #Wait for receives to finish
-    local statuses = MPI.Waitall!(req_r)
+    local statuses = Waitall!(req_r)
 
     #Unpack the receive buffers
     for ll in 1:NUM_VARS
@@ -614,7 +707,7 @@ function set_halo_values_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     end
 
     #Wait for sends to finish
-    local statuses = MPI.Waitall!(req_s)
+    local statuses = Waitall!(req_s)
     
     if (DATA_SPEC == DATA_SPEC_INJECTION)
        if (MYRANK == 0)
@@ -712,8 +805,31 @@ function set_halo_values_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     end
 
 end
-        
-function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+
+function compute_tendencies_z_accel!(tend_z_kernel::KernelInfo,
+					state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    flux::Array{Float64, 3},
+                    tend::Array{Float64, 3},
+                    dt::Float64,
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_int::Vector{Float64},
+                    hy_dens_theta_int::Vector{Float64},
+                    hy_pressure_int::Vector{Float64})
+
+	@jenterdata tend_z_kernel.accel update(state)
+
+    #innames = ("state", "dt", "hy_dens_cell", "hy_dens_theta_cell",
+	#		"hy_dens_int", "hy_dens_theta_int", "hy_pressure_int")
+
+    @jlaunch(tend_z_kernel, state, dt, hy_dens_cell, hy_dens_theta_cell,
+			hy_dens_int, hy_dens_theta_int, hy_pressure_int; output=(flux, tend,))
+
+	@jexitdata tend_z_kernel.accel update(tend)
+
+end
+       
+function compute_tendencies_z_julia!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     flux::Array{Float64, 3},
                     tend::Array{Float64, 3},
                     dt::Float64,
@@ -779,14 +895,15 @@ function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
 
 
 end
-            
-function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+
+function reductions_julia(reduce_kernel::KernelInfo,
+                    state::OffsetArray{Float64, 3, Array{Float64, 3}},
                     hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                     hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
     
     local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
     glob = Array{Float64}(undef, 2)
-    
+
     for k in 1:NZ
         for i in 1:NX
             r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
@@ -802,7 +919,30 @@ function reductions(state::OffsetArray{Float64, 3, Array{Float64, 3}},
         end
     end
     
-    MPI.Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
+    Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
+    
+    return glob
+end
+
+function reductions_accel(reduce_kernel::KernelInfo,
+                    state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
+    
+    local mass = zero(Float64)
+    local te = zero(Float64)
+    glob = Array{Float64}(undef, 2)
+
+    #innames = ("state", "hy_dens_cell", "hy_dens_theta_cell")
+
+	@jenterdata reduce_kernel.accel update(state)
+
+    @jlaunch(reduce_kernel, state, hy_dens_cell, hy_dens_theta_cell; output=(glob,))
+
+    mass = glob[1]
+    te = glob[2]
+
+    Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
     
     return glob
 end
@@ -865,7 +1005,8 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
        if ( etime == 0.0 )
 
           # Open NetCDF output file with a create mode
-          ds = Dataset("output.nc","c")
+          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","c")
+          #ds = Dataset("output.nc","c")
 
           defDim(ds,"t",Inf)
           defDim(ds,"x",NX_GLOB)
@@ -888,7 +1029,8 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
        else
 
           # Open NetCDF output file with an append mode
-          ds = Dataset("output.nc","a")
+          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","a")
+          #ds = Dataset("output.nc","a")
 
           nc_var = ds["t"]
           nc_var[nt] = etime
@@ -907,6 +1049,96 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
        end # etime
     end # MASTER
 end
+
+##Output the fluid state (state) to a NetCDF file at a given elapsed model time (etime)
+#function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+#                etime::Float64,
+#                nt::Int,
+#                hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
+#                hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
+#
+#    var_local  = zeros(Float64, NX, NZ, NUM_VARS)
+#
+#    println("OUTPUT IN", MYRANK)
+#
+#    #if MASTERPROC
+#    var_global  = zeros(Float64, NX_GLOB, NZ_GLOB, NUM_VARS)
+#    #end
+#
+#    #Store perturbed values in the temp arrays for output
+#    for k in 1:NZ
+#        for i in 1:NX
+#            var_local[i,k,ID_DENS]  = state[i,k,ID_DENS]
+#            var_local[i,k,ID_UMOM]  = state[i,k,ID_UMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+#            var_local[i,k,ID_WMOM]  = state[i,k,ID_WMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+#            var_local[i,k,ID_RHOT] = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
+#                         - hy_dens_theta_cell[k] / hy_dens_cell[k]
+#        end
+#    end
+#
+#   #Gather data from multiple CPUs
+#    for ll in 1:NUM_VARS
+#        if MASTERPROC
+#           var_global[I_BEG:I_END,:,ll] = var_local[:,:,ll]
+#        else
+#           Gather!(var_local[:,:,ll],var_global[I_BEG:I_END,:,ll],MASTERPROC,COMM)
+#        end
+#    end
+#
+#    println("OUTPUT MID", MYRANK)
+#
+#    # Write output only in MASTER
+#    if MASTERPROC
+#
+#       #If the elapsed time is zero, create the file. Otherwise, open the file
+#       if ( etime == 0.0 )
+#
+#          # Open NetCDF output file with a create mode
+#          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","c")
+#          #ds = Dataset("output.nc","c")
+#
+#          defDim(ds,"t",Inf)
+#          defDim(ds,"x",NX_GLOB)
+#          defDim(ds,"z",NZ_GLOB)
+#
+#          nc_var = defVar(ds,"t",Float64,("t",))
+#          nc_var[nt] = etime
+#          nc_var = defVar(ds,"dens",Float64,("x","z","t"))
+#          nc_var[:,:,nt] = var_global[:,:,ID_DENS]
+#          nc_var = defVar(ds,"uwnd",Float64,("x","z","t"))
+#          nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
+#          nc_var = defVar(ds,"wwnd",Float64,("x","z","t"))
+#          nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
+#          nc_var = defVar(ds,"theta",Float64,("x","z","t"))
+#          nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+#
+#          # Close NetCDF file
+#          close(ds)
+#
+#       else
+#
+#          # Open NetCDF output file with an append mode
+#          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","a")
+#
+#          nc_var = ds["t"]
+#          nc_var[nt] = etime
+#          nc_var = ds["dens"]
+#          nc_var[:,:,nt] = var_global[:,:,ID_DENS]
+#          nc_var = ds["uwnd"]
+#          nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
+#          nc_var = ds["wwnd"]
+#          nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
+#          nc_var = ds["theta"]
+#          nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+#
+#          # Close NetCDF file
+#          close(ds)
+#
+#       end # etime
+#    end # MASTER
+#
+#    println("OUTPUT OUT", MYRANK)
+#end
 
 function finalize!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
 

@@ -2,14 +2,14 @@
 # example command: srun  -n 2 -- make
 
 #SIM_TIME := 400.0
-SIM_TIME := 50.0
+SIM_TIME := 100.0
 OUT_FREQ := 100.0
 NX := 100 
 NZ := 50
-#SIM_TIME := 10.0
-#OUT_FREQ := 10.0
-#NX := 640 
-#NZ := 100
+#SIM_TIME := 10.0 #10.0
+#OUT_FREQ := 10.0 # 10.0
+#NX := 6400 # 640 
+#NZ := 100 # 100
 
 DATA_SPEC_COLLISION       := 1
 DATA_SPEC_THERMAL         := 2
@@ -24,7 +24,8 @@ DATA_SPEC := ${DATA_SPEC_THERMAL}
 #JULIA := julia --project=.
 JULIA := julia --project=/ccs/home/grnydawn/repos/github/jlweather/run/crusher
 SRCDIR :=../../src
-SRC := ${SRCDIR}/miniWeather_mpi.jl
+ACCSRC := ${SRCDIR}/miniWeather_accel.jl
+JLSRC := ${SRCDIR}/miniWeather_mpi.jl
 FORTSRC := ${SRCDIR}/miniWeather_mpi.F90
 ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA_SPEC}
 #ARGS := 
@@ -39,8 +40,11 @@ MACROS := -D_NX=${NX} -D_NZ=${NZ} -D_SIM_TIME=${SIM_TIME} -D_OUT_FREQ=${OUT_FREQ
 
 F_FLAGS := ${INCLUDES} ${LIBS} ${MACROS}
 
+accel:
+	${JULIA} --color=yes -O -- ${ACCSRC} ${ARGS}
+
 julia:
-	${JULIA} --color=yes -O -- ${SRC} ${ARGS}
+	${JULIA} --color=yes -O -- ${JLSRC} ${ARGS}
 
 debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}

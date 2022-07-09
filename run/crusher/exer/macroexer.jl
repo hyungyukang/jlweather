@@ -1,18 +1,17 @@
-function ex1(test)
-    println("in ex1: test = ", test)
-end
+macro twostep(arg)
+           println("I execute at parse time. The argument is: ", arg)
+            println("__source__.file = ", __source__.file)
+            println("__source__.line = ", __source__.line)
+           return :(println("I execute at runtime. The argument is: ", $arg))
+       end
 
-ex1(1)
+ex = macroexpand(Main, :(@twostep :(1, 2, 3)) )
 
-@generated function ex2(expr1)
-    println("in compile ex2: expr1 = ", expr1)
-    return :(println("in execute ex2: ", $expr1); expr1)
-end
+println("typeof(ex) = ", typeof(ex))
 
+println("ex = ", ex)
 
-println("WWW", ex2(1+1))
-println("WWW", ex2(1+1))
-println("WWW", ex2(1.0+1.0))
-println("WWW", ex2("test"))
-println("WWW", ex2("test"))
-println("WWW", ex2("test1"))
+println("eval(ex) = ", eval(ex))
+
+@twostep(1)
+
