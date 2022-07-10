@@ -35,7 +35,7 @@ import Libdl
 ##############
 
 const COMPILE_FOPENACC_CRAY = "ftn -shared -fPIC -h acc,noomp"
-const COMPILE_FORTRAN = "ftn -fPIC -shared"
+const COMPILE_FORTRAN = "ftn -fPIC -shared -h noacc,noomp"
 const COMPILE = COMPILE_FOPENACC_CRAY
 #const COMPILE = COMPILE_FORTRAN
 #const COMPILE = nothing
@@ -197,15 +197,11 @@ function main(args::Vector{String})
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
             sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
-    #allocnames = ("state", "statetmp", "flux", "tend", "hy_dens_cell", "hy_dens_theta_cell",
-    #				"hy_dens_int", "hy_dens_theta_int", "hy_pressure_int")
 	@jenterdata accel allocate(state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
 			hy_dens_int, hy_dens_theta_int, hy_pressure_int)
 
 	# NOTE: add filename and line # to generate hash of jai functions
 
-    #updatedevnames = ("hy_dens_cell", "hy_dens_theta_cell", "hy_dens_int",
-    #                    "hy_dens_theta_int", "hy_pressure_int")
 	@jenterdata accel update(hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
 
