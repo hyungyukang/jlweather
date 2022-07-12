@@ -321,7 +321,7 @@ function init!()
             z = (K_BEG-1 + k-0.5) * DZ + (qpoints[kk]-0.5)*DZ
 
             #Set the fluid state based on the user's specification
-            r, u, w, t, hr, ht = @match data_spec_int begin
+            r, u, w, t, hr, ht = @match DATA_SPEC begin
                 DATA_SPEC_COLLISION       => collision!(x,z)
                 DATA_SPEC_THERMAL         => thermal!(x,z)
                 DATA_SPEC_MOUNTAIN        => mountain_waves!(x,z)
@@ -348,7 +348,7 @@ function init!()
             z = (K_BEG-1 + k-0.5) * DZ + (qpoints[kk]-0.5)*DZ
             
             #Set the fluid state based on the user's specification
-            r, u, w, t, hr, ht = @match data_spec_int begin
+            r, u, w, t, hr, ht = @match DATA_SPEC begin
                 DATA_SPEC_COLLISION       => collision!(0.0,z)
                 DATA_SPEC_THERMAL         => thermal!(0.0,z)
                 DATA_SPEC_MOUNTAIN        => mountain_waves!(0.0,z)
@@ -366,7 +366,7 @@ function init!()
     for k in 1:NZ+1
         z = (K_BEG-1 + k-1) * DZ
         #Set the fluid state based on the user's specification
-        r, u, w, t, hr, ht = @match data_spec_int begin
+        r, u, w, t, hr, ht = @match DATA_SPEC begin
             DATA_SPEC_COLLISION       => collision!(0.0,z)
             DATA_SPEC_THERMAL         => thermal!(0.0,z)
             DATA_SPEC_MOUNTAIN        => mountain_waves!(0.0,z)
