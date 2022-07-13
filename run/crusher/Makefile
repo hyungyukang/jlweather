@@ -4,8 +4,8 @@
 #SIM_TIME := 400.0
 OUT_FREQ := 100.0
 SIM_TIME := 100.0
-NX := 600 
-NZ := 300
+NX := 200
+NZ := 100
 #SIM_TIME := 10.0 #10.0
 #OUT_FREQ := 10.0 # 10.0
 #NX := 6400 # 640 
@@ -23,12 +23,16 @@ DATA_SPEC := ${DATA_SPEC_THERMAL}
 
 #JULIA := julia --project=.
 JULIA := julia --project=/ccs/home/grnydawn/repos/github/jlweather/run/crusher
+
 SRCDIR :=../../src
 ACCSRC := ${SRCDIR}/miniWeather_accel.jl
 JLSRC := ${SRCDIR}/miniWeather_mpi.jl
 FORTSRC := ${SRCDIR}/miniWeather_mpi.F90
 #FORTACCSRC := ${SRCDIR}/miniWeather_mpi_openacc.F90
 FORTACCSRC := ${SRCDIR}/miniWeather_openacc.F90
+MANUALJLSRC := ${SRCDIR}/manual/miniWeather_openacc.jl
+MANUALFORTSRC := ${SRCDIR}/manual/openacc_driver_${NX}x${NZ}.F90
+
 ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA_SPEC}
 #ARGS := 
 
@@ -57,6 +61,10 @@ fort: ${FORTSRC}
 
 fortacc: ${FORTACCSRC}
 	${FC} ${F_FLAGS} -h acc,noomp -o miniweather_fortacc.exe $<
+
+manual: ${MANUALFORTSRC}
+	ftn -shared -fPIC -h acc,noomp -o jopenacc.so $<
+	${JULIA} ${MANUALJLSRC} ${ARGS}
 
 clean:
 	rm -rf *.so core *.mod .jaitmp *.o *.s *.exe output.nc
