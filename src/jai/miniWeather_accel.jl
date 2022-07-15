@@ -38,10 +38,9 @@ import Libdl
 ##############
 
 const COMPILE_FOPENACC_CRAY = "ftn -shared -fPIC -h acc,noomp"
-const COMPILE_FORTRAN = "ftn -fPIC -shared -h noacc,noomp"
+#const COMPILE_FORTRAN = "ftn -fPIC -shared -h noacc,noomp"
 const COMPILE = COMPILE_FOPENACC_CRAY
 #const COMPILE = COMPILE_FORTRAN
-#const COMPILE = nothing
 
 const PATH_REDUCTION_KERNEL = joinpath(@__DIR__, "reduction.knl") 
 const PATH_APPLY_SAME_KERNEL = joinpath(@__DIR__, "apply_same.knl") 
@@ -54,7 +53,9 @@ const PATH_TEND_Z_KERNEL = joinpath(@__DIR__, "tend_z.knl")
 ##############
     
 # julia command to link MPI.jl to system MPI installation
-# julia --project=. -e 'ENV["JULIA_MPI_BINARY"]="system"; ENV["JULIA_MPI_PATH"]="/opt/cray/pe/mpich/8.1.16/ofi/crayclang/10.0"; using Pkg; Pkg.build("MPI"; verbose=true)'
+# julia --project=. -e 'ENV["JULIA_MPI_BINARY"]="system"; 
+# ENV["JULIA_MPI_PATH"]="/opt/cray/pe/mpich/8.1.16/ofi/crayclang/10.0";
+# using Pkg; Pkg.build("MPI"; verbose=true)'
 # MPI.install_mpiexecjl()
 
 Init()
@@ -174,17 +175,9 @@ function main(args::Vector{String})
     local nt = Int(1)
 
 
-    if COMPILE == COMPILE_FOPENACC_CRAY
-
-        @jaccel myaccel framework(fortran_openacc) constant(NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0, HV_BETA, GRAV,
+    @jaccel myaccel framework(fortran_openacc) constant(NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0, HV_BETA, GRAV,
                 RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, STEN_SIZE) compile(COMPILE) set(master=MASTERPROC,
                 debugdir=".jaitmp")
-
-    elseif COMPILE == COMPILE_FORTRAN
-
-        @jaccel myaccel framework(fortran) constant(NX, NZ, DX, DZ, HS, NUM_VARS, C0, GAMMA, P0, HV_BETA, GRAV,
-                RD, CP, CV, ID_DENS, ID_UMOM, ID_WMOM, ID_RHOT, STEN_SIZE) compile(COMPILE) set(master=MASTERPROC)
-    end
 
     @jkernel reduce_kernel myaccel PATH_REDUCTION_KERNEL
     #@jkernel apply_same_kernel myaccel PATH_APPLY_SAME_KERNEL
@@ -208,15 +201,10 @@ function main(args::Vector{String})
 
     #Initial reductions for mass, kinetic energy, and total energy
 
-	if !(COMPILE == nothing) 
-		local mass0, te0 = reductions_accel(state, hy_dens_cell, hy_dens_theta_cell)
-	else
-		local mass0, te0 = reductions_julia(state, hy_dens_cell, hy_dens_theta_cell)
-	end
-
+    local mass0, te0 = reductions_accel(state, hy_dens_cell, hy_dens_theta_cell)
 
     #Output the initial state
-    # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
+    output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
     
     # main loop
     elapsedtime = @elapsed while etime < SIM_TIME
@@ -256,11 +244,7 @@ function main(args::Vector{String})
 	    #Profile.print()
     end
 
-	if !(COMPILE == nothing) 
-		local mass, te = reductions_accel(state, hy_dens_cell, hy_dens_theta_cell)
-	else
-		local mass, te = reductions_julia(state, hy_dens_cell, hy_dens_theta_cell)
-	end
+    local mass, te = reductions_accel(state, hy_dens_cell, hy_dens_theta_cell)
  
  	@jexitdata myaccel deallocate(state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
 			hy_dens_int, hy_dens_theta_int, hy_pressure_int)
@@ -630,18 +614,8 @@ function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3
         set_halo_values_z!(stateforcing, hy_dens_cell, hy_dens_theta_cell)
         
         #Compute the time tendencies for the fluid state in the z-direction
-		if !(COMPILE == nothing) 
-            compute_tendencies_z_accel!(stateforcing,flux,tend,dt,
-                            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
-
-            #compute_tendencies_z_julia!(stateforcing,flux,tend,dt,
-            #                hy_dens_int, hy_dens_theta_int, hy_pressure_int)
-		else
-            compute_tendencies_z_julia!(stateforcing,flux,tend,dt,
-                            hy_dens_int, hy_dens_theta_int, hy_pressure_int)
-
-		end
-
+        compute_tendencies_z_accel!(stateforcing,flux,tend,dt,
+                    hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
     end
   
@@ -788,98 +762,6 @@ function compute_tendencies_z_accel!(state::OffsetArray{Float64, 3, Array{Float6
 
 	@jexitdata myaccel update(tend)
 
-end
-       
-function compute_tendencies_z_julia!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
-                    flux::Array{Float64, 3},
-                    tend::Array{Float64, 3},
-                    dt::Float64,
-                    hy_dens_int::Vector{Float64},
-                    hy_dens_theta_int::Vector{Float64},
-                    hy_pressure_int::Vector{Float64})
-    
-    local stencil = Array{Float64}(undef, STEN_SIZE)
-    local d3_vals = Array{Float64}(undef, NUM_VARS)
-    local vals    = Array{Float64}(undef, NUM_VARS)
-    local (r, u, w, t, p) = [zero(Float64) for _ in 1:5]
- 
-    #Compute the hyperviscosity coeficient
-    local hv_coef = -HV_BETA * DZ / (16*dt)
-
-    #Compute fluxes in the x-direction for each cell
-    for k in 1:NZ+1
-      for i in 1:NX
-        #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
-        for ll in 1:NUM_VARS
-          for s in 1:STEN_SIZE
-            stencil[s] = state[i,k-HS-1+s,ll]
-          end # s
-          #Fourth-order-accurate interpolation of the state
-          vals[ll] = -stencil[1]/12 + 7*stencil[2]/12 + 7*stencil[3]/12 - stencil[4]/12
-          #First-order-accurate interpolation of the third spatial derivative of the state
-          d3_vals[ll] = -stencil[1] + 3*stencil[2] - 3*stencil[3] + stencil[4]
-        end # ll
-
-        #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
-        r = vals[ID_DENS] + hy_dens_int[k]
-        u = vals[ID_UMOM] / r
-        w = vals[ID_WMOM] / r
-        t = ( vals[ID_RHOT] + hy_dens_theta_int[k] ) / r
-        p = C0*(r*t)^GAMMA - hy_pressure_int[k]
-        #Enforce vertical boundary condition and exact mass conservation
-        if (k == 1 || k == NZ+1) 
-          w                = 0
-          d3_vals[ID_DENS] = 0
-        end
-
-        #Compute the flux vector with hyperviscosity
-        flux[i,k,ID_DENS] = r*w     - hv_coef*d3_vals[ID_DENS]
-        flux[i,k,ID_UMOM] = r*w*u   - hv_coef*d3_vals[ID_UMOM]
-        flux[i,k,ID_WMOM] = r*w*w+p - hv_coef*d3_vals[ID_WMOM]
-        flux[i,k,ID_RHOT] = r*w*t   - hv_coef*d3_vals[ID_RHOT]
-      end
-    end
-
-    #Use the fluxes to compute tendencies for each cell
-    for ll in 1:NUM_VARS
-        for k in 1:NZ
-            for i in 1:NX
-                tend[i,k,ll] = -( flux[i,k+1,ll] - flux[i,k,ll] ) / DZ
-                if (ll == ID_WMOM)
-                   tend[i,k,ID_WMOM] = tend[i,k,ID_WMOM] - state[i,k,ID_DENS]*GRAV
-                end
-            end
-        end
-    end
-
-
-end
-
-function reductions_julia(state::OffsetArray{Float64, 3, Array{Float64, 3}},
-                    hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
-                    hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
-    
-    local mass, te, r, u, w, th, p, t, ke, le = [zero(Float64) for _ in 1:10] 
-    glob = Array{Float64}(undef, 2)
-
-    for k in 1:NZ
-        for i in 1:NX
-            r  =   state[i,k,ID_DENS] + hy_dens_cell[k]             # Density
-            u  =   state[i,k,ID_UMOM] / r                           # U-wind
-            w  =   state[i,k,ID_WMOM] / r                           # W-wind
-            th = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / r # Potential Temperature (theta)
-            p  = C0*(r*th)^GAMMA      # Pressure
-            t  = th / (P0/p)^(RD/CP)  # Temperature
-            ke = r*(u*u+w*w)          # Kinetic Energy
-            ie = r*CV*t               # Internal Energy
-            mass = mass + r            *DX*DZ # Accumulate domain mass
-            te   = te   + (ke + r*CV*t)*DX*DZ # Accumulate domain total energy
-        end
-    end
-    
-    Allreduce!(Array{Float64}([mass,te]), glob, +, COMM)
-    
-    return glob
 end
 
 function reductions_accel(state::OffsetArray{Float64, 3, Array{Float64, 3}},

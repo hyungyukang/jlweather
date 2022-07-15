@@ -143,8 +143,6 @@ function main(args::Vector{String})
     # top-level variables
     ######################
 
-    #@show(args)
-    
     local etime = Float64(0.0)
     local output_counter = Float64(0.0)
     local dt = DT
@@ -158,8 +156,6 @@ function main(args::Vector{String})
 
     #Initial reductions for mass, kinetic energy, and total energy
     local mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
-
-    #println(state[:,:,ID_DENS])
 
     #Output the initial state
     output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
