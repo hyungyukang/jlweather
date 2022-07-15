@@ -1,0 +1,8 @@
+*.toml
+*.mod
+*.o
+*.s
+*.exe
+*.nc
+*.out
+src

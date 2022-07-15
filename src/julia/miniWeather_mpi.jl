@@ -1,10 +1,25 @@
-using OffsetArrays
-using Match
-using MPI
-using Debugger
-using Printf
-#using NetCDF
-using NCDatasets
+using AccelInterfaces
+
+import Profile
+
+import OffsetArrays.OffsetArray,
+       OffsetArrays.OffsetVector
+
+import ArgParse.ArgParseSettings,
+       ArgParse.parse_args,
+       ArgParse.@add_arg_table!
+
+import NCDatasets: Dataset
+
+import Match.@match
+
+import MPI
+
+import Debugger
+
+import Printf.@printf
+
+import Libdl
 
 ##############
 # constants
@@ -17,19 +32,36 @@ const COMM   = MPI.COMM_WORLD
 const NRANKS = MPI.Comm_size(COMM)
 const MYRANK = MPI.Comm_rank(COMM)
 
-if length(ARGS) >= 5
-    const SIM_TIME    = parse(Float64, ARGS[1])
-    const NX_GLOB     = parse(Int64, ARGS[2])
-    const NZ_GLOB     = parse(Int64, ARGS[3])
-    const OUT_FREQ    = parse(Float64, ARGS[4])
-    const DATA_SPEC   = parse(Int64, ARGS[5])
-else
-    const SIM_TIME    = Float64(100.0)
-    const NX_GLOB     = Int64(200)
-    const NZ_GLOB     = Int64(100)
-    const OUT_FREQ    = Float64(100.0)
-    const DATA_SPEC   = Int64(1)
+s = ArgParseSettings()
+@add_arg_table! s begin
+    "--simtime", "-s"
+        help = "simulation time"
+        arg_type = Float64
+        default = 400.0
+    "--nx", "-x"
+        help = "x-dimension"
+        arg_type = Int64
+        default = 100
+    "--nz", "-z"
+        help = "z-dimension"
+        arg_type = Int64
+        default = 50
+    "--outfreq", "-f"
+        help = "output frequency in time"
+        arg_type = Float64
+        default = 400.0
+    "--dataspec", "-d"
+        help = "data spec"
+        default = 2
 end
+
+parsed_args = parse_args(ARGS, s)
+
+const SIM_TIME    = parsed_args["simtime"]
+const NX_GLOB     = parsed_args["nx"]
+const NZ_GLOB     = parsed_args["nz"]
+const OUT_FREQ    = parsed_args["outfreq"]
+const DATA_SPEC   = parsed_args["dataspec"]
     
 const NPER  = Float64(NX_GLOB)/NRANKS
 const I_BEG = trunc(Int, round(NPER* MYRANK)+1)
@@ -883,4 +915,3 @@ end
 
 # invoke main function
 main(ARGS)
-#@run main(ARGS)

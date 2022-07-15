@@ -27,3 +27,5 @@ Manifest.toml
 doc/notebook/.ipynb_checkpoints
 *.swp
 src/.ipynb_checkpoints
+*.so
+*.bak
