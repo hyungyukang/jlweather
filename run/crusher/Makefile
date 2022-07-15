@@ -20,6 +20,8 @@ DATA_SPEC_INJECTION       := 6
 #DATA_SPEC := ${DATA_SPEC_COLLISION}
 DATA_SPEC := ${DATA_SPEC_THERMAL}
 
+OUT_FILE := /gpfs/alpine/cli133/proj-shared/grnydawn/temp/output.nc
+
 JULIA := julia --project=.
 
 SRCDIR :=../../src
@@ -30,7 +32,7 @@ FORTACCSRC := ${SRCDIR}/fortran/miniWeather_openacc.F90
 MANUALJLSRC := ${SRCDIR}/manual/miniWeather_openacc.jl
 MANUALFORTSRC := ${SRCDIR}/manual/openacc_driver_${NX}x${NZ}.F90
 
-ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA_SPEC}
+ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA_SPEC} -o ${OUT_FILE}
 
 CC := cc
 CXX := CC

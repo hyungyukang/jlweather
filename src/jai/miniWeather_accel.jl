@@ -9,7 +9,10 @@ import ArgParse.ArgParseSettings,
        ArgParse.parse_args,
        ArgParse.@add_arg_table!
 
-import NCDatasets: Dataset
+import NCDatasets.Dataset,
+       NCDatasets.defDim,
+       NCDatasets.defVar
+
 
 import Match.@match
 
@@ -80,6 +83,9 @@ s = ArgParseSettings()
     "--dataspec", "-d"
         help = "data spec"
         default = 2
+    "--outfile", "-o"
+        help = "output file path"
+        default = "output.nc"
 end
 
 parsed_args = parse_args(ARGS, s)
@@ -89,7 +95,8 @@ const NX_GLOB     = parsed_args["nx"]
 const NZ_GLOB     = parsed_args["nz"]
 const OUT_FREQ    = parsed_args["outfreq"]
 const DATA_SPEC   = parsed_args["dataspec"]
-    
+const OUTFILE     = parsed_args["outfile"]
+
 const NPER  = Float64(NX_GLOB)/NRANKS
 const I_BEG = trunc(Int, round(NPER* MYRANK)+1)
 const I_END = trunc(Int, round(NPER*(MYRANK+1)))
@@ -239,11 +246,10 @@ function main(args::Vector{String})
         if (output_counter >= OUT_FREQ)
           #Increment the number of outputs
           nt = nt + 1
-          # YSK output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
+          output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
           output_counter = output_counter - OUT_FREQ
         end
 
-        #println("SUM(state) = ", sum(state))
     end
 
     if MASTERPROC
@@ -954,8 +960,7 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
        if ( etime == 0.0 )
 
           # Open NetCDF output file with a create mode
-          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","c")
-          #ds = Dataset("output.nc","c")
+          ds = Dataset(OUTFILE,"c")
 
           defDim(ds,"t",Inf)
           defDim(ds,"x",NX_GLOB)
@@ -978,8 +983,7 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
        else
 
           # Open NetCDF output file with an append mode
-          ds = Dataset("/gpfs/alpine/cli133/scratch/grnydawn/output.nc","a")
-          #ds = Dataset("output.nc","a")
+          ds = Dataset(OUTFILE,"a")
 
           nc_var = ds["t"]
           nc_var[nt] = etime
@@ -999,7 +1003,6 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     end # MASTER
 end
 
-
 function finalize!(state::OffsetArray{Float64, 3, Array{Float64, 3}})
 
     #println(axes(state))
@@ -1008,4 +1011,3 @@ end
 
 # invoke main function
 main(ARGS)
-#@run main(ARGS)

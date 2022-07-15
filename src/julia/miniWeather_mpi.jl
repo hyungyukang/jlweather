@@ -9,7 +9,9 @@ import ArgParse.ArgParseSettings,
        ArgParse.parse_args,
        ArgParse.@add_arg_table!
 
-import NCDatasets: Dataset
+import NCDatasets.Dataset,
+       NCDatasets.defDim,
+       NCDatasets.defVar
 
 import Match.@match
 
@@ -53,6 +55,10 @@ s = ArgParseSettings()
     "--dataspec", "-d"
         help = "data spec"
         default = 2
+    "--outfile", "-o"
+        help = "output file path"
+        default = "output.nc"
+
 end
 
 parsed_args = parse_args(ARGS, s)
@@ -62,7 +68,8 @@ const NX_GLOB     = parsed_args["nx"]
 const NZ_GLOB     = parsed_args["nz"]
 const OUT_FREQ    = parsed_args["outfreq"]
 const DATA_SPEC   = parsed_args["dataspec"]
-    
+const OUTFILE     = parsed_args["outfile"]
+
 const NPER  = Float64(NX_GLOB)/NRANKS
 const I_BEG = trunc(Int, round(NPER* MYRANK)+1)
 const I_END = trunc(Int, round(NPER*(MYRANK+1)))
@@ -245,7 +252,7 @@ function init!()
             z = (K_BEG-1 + k-0.5) * DZ + (qpoints[kk]-0.5)*DZ
 
             #Set the fluid state based on the user's specification
-            r, u, w, t, hr, ht = @match data_spec_int begin
+            r, u, w, t, hr, ht = @match DATA_SPEC begin
                 DATA_SPEC_COLLISION       => collision!(x,z)
                 DATA_SPEC_THERMAL         => thermal!(x,z)
                 DATA_SPEC_MOUNTAIN        => mountain_waves!(x,z)
@@ -272,7 +279,7 @@ function init!()
             z = (K_BEG-1 + k-0.5) * DZ + (qpoints[kk]-0.5)*DZ
             
             #Set the fluid state based on the user's specification
-            r, u, w, t, hr, ht = @match data_spec_int begin
+            r, u, w, t, hr, ht = @match DATA_SPEC begin
                 DATA_SPEC_COLLISION       => collision!(0.0,z)
                 DATA_SPEC_THERMAL         => thermal!(0.0,z)
                 DATA_SPEC_MOUNTAIN        => mountain_waves!(0.0,z)
@@ -290,7 +297,7 @@ function init!()
     for k in 1:NZ+1
         z = (K_BEG-1 + k-1) * DZ
         #Set the fluid state based on the user's specification
-        r, u, w, t, hr, ht = @match data_spec_int begin
+        r, u, w, t, hr, ht = @match DATA_SPEC begin
             DATA_SPEC_COLLISION       => collision!(0.0,z)
             DATA_SPEC_THERMAL         => thermal!(0.0,z)
             DATA_SPEC_MOUNTAIN        => mountain_waves!(0.0,z)
@@ -459,56 +466,56 @@ function timestep!(state::OffsetArray{Float64, 3, Array{Float64, 3}},
     if direction_switch
         
         #x-direction first
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
+        semi_discrete_step!(state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
+        semi_discrete_step!(state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
+        semi_discrete_step!(state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
         #z-direction second
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
+        semi_discrete_step!(state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
+        semi_discrete_step!(state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
+        semi_discrete_step!(state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
     else
         
         #z-direction second
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
+        semi_discrete_step!(state , state    , statetmp , dt / 3 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
+        semi_discrete_step!(state , statetmp , statetmp , dt / 2 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
+        semi_discrete_step!(state , statetmp , state    , dt / 1 , DIR_Z , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
         #x-direction first
-        semi_discrete_step!( state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
+        semi_discrete_step!(state , state    , statetmp , dt / 3 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
+        semi_discrete_step!(state , statetmp , statetmp , dt / 2 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
         
-        semi_discrete_step!( state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
+        semi_discrete_step!(state , statetmp , state    , dt / 1 , DIR_X , flux , tend,
             recvbuf_l, recvbuf_r, sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int)
     end
@@ -864,7 +871,7 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
        if ( etime == 0.0 )
 
           # Open NetCDF output file with a create mode
-          ds = Dataset("output.nc","c")
+          ds = Dataset(OUTFILE,"c")
 
           defDim(ds,"t",Inf)
           defDim(ds,"x",NX_GLOB)
@@ -887,7 +894,7 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
        else
 
           # Open NetCDF output file with an append mode
-          ds = Dataset("output.nc","a")
+          ds = Dataset(OUTFILE,"a")
 
           nc_var = ds["t"]
           nc_var[nt] = etime
