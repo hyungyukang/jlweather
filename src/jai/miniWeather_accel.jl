@@ -161,8 +161,6 @@ function main(args::Vector{String})
     # top-level variables
     ######################
 
-    #@show(args)
-    
     local etime = Float64(0.0)
     local output_counter = Float64(0.0)
     local dt = DT

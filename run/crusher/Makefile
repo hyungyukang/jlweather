@@ -1,4 +1,3 @@
-# example command: jsrun  -n 2 -- make
 # example command: srun  -n 2 -- make
 
 #SIM_TIME := 400.0
@@ -21,20 +20,17 @@ DATA_SPEC_INJECTION       := 6
 #DATA_SPEC := ${DATA_SPEC_COLLISION}
 DATA_SPEC := ${DATA_SPEC_THERMAL}
 
-#JULIA := julia --project=.
-JULIA := julia --project=/ccs/home/grnydawn/repos/github/jlweather/run/crusher
+JULIA := julia --project=.
 
 SRCDIR :=../../src
-ACCSRC := ${SRCDIR}/miniWeather_accel.jl
-JLSRC := ${SRCDIR}/miniWeather_mpi.jl
-FORTSRC := ${SRCDIR}/miniWeather_mpi.F90
-#FORTACCSRC := ${SRCDIR}/miniWeather_mpi_openacc.F90
-FORTACCSRC := ${SRCDIR}/miniWeather_openacc.F90
+JAISRC := ${SRCDIR}/jai/miniWeather_accel.jl
+JLSRC := ${SRCDIR}/julia/miniWeather_mpi.jl
+FORTSRC := ${SRCDIR}/fortran/miniWeather_mpi.F90
+FORTACCSRC := ${SRCDIR}/fortran/miniWeather_openacc.F90
 MANUALJLSRC := ${SRCDIR}/manual/miniWeather_openacc.jl
 MANUALFORTSRC := ${SRCDIR}/manual/openacc_driver_${NX}x${NZ}.F90
 
 ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA_SPEC}
-#ARGS := 
 
 CC := cc
 CXX := CC
@@ -46,8 +42,8 @@ MACROS := -D_NX=${NX} -D_NZ=${NZ} -D_SIM_TIME=${SIM_TIME} -D_OUT_FREQ=${OUT_FREQ
 
 F_FLAGS := ${INCLUDES} ${LIBS} ${MACROS}
 
-accel:
-	${JULIA} --color=yes -O -- ${ACCSRC} ${ARGS}
+jai:
+	${JULIA} --color=yes -O -- ${JAISRC} ${ARGS}
 
 julia:
 	${JULIA} --color=yes -O -- ${JLSRC} ${ARGS}
@@ -57,7 +53,6 @@ debug:
 
 fort: ${FORTSRC}
 	${FC} ${F_FLAGS} -o miniweather_fort.exe $<
-	#${FC} ${F_FLAGS} -h noacc,noomp -o miniweather_fort.exe $<
 
 fortacc: ${FORTACCSRC}
 	${FC} ${F_FLAGS} -h acc,noomp -o miniweather_fortacc.exe $<
