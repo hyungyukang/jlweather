@@ -11,7 +11,7 @@ Fortran+MPI          Fortran MPI implementation copied from `original miniWeathe
 Fortran OpenAcc      Fortran OpenAcc porting of Fortran+MPI version
 Julia                Julia implementation of Fortran+MPI version
 Julia+Manual_OpenAcc Julia OpenAcc manual implementation of Fortran OpenAcc version
-Julia+JAI(OpenAcc)   Julia OpenAcc implementation using `Julia Accelerator Interfaces(JAI) <https://github.com/grnydawn/AccelInterfaces.jl/>`_ of Fortran OpenAcc version
+Julia+JAI(OpenAcc)   Julia OpenAcc implementation using `Julia Accelerator Interfaces:JAI <https://github.com/grnydawn/AccelInterfaces.jl/>`_ of Fortran OpenAcc version
 ==================== =======================================================================================================================================================
 
 
