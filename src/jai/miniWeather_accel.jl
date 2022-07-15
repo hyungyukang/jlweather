@@ -180,8 +180,6 @@ function main(args::Vector{String})
                 debugdir=".jaitmp")
 
     @jkernel reduce_kernel myaccel PATH_REDUCTION_KERNEL
-    #@jkernel apply_same_kernel myaccel PATH_APPLY_SAME_KERNEL
-    #@jkernel apply_diff_kernel myaccel PATH_APPLY_DIFF_KERNEL
     @jkernel tend_x_kernel myaccel PATH_TEND_X_KERNEL
     @jkernel tend_z_kernel myaccel PATH_TEND_Z_KERNEL
 
@@ -620,18 +618,6 @@ function semi_discrete_step!(stateinit::OffsetArray{Float64, 3, Array{Float64, 3
     end
   
     #Apply the tendencies to the fluid state
-    
-#    if stateinit == stateout 
-#        @jenterdata myaccel update(stateout, tend)
-#        @jlaunch(apply_same_kernel, stateout, dt, tend ; output=(stateout,))
-#        @jexitdata myaccel update(stateout)
-#
-#    else
-#        @jenterdata myaccel update(stateinit, tend)
-#        @jlaunch(apply_diff_kernel, stateinit, dt, tend ; output=(stateout,))
-#	    @jexitdata myaccel update(stateout)
-#    end
-
     for ll in 1:NUM_VARS
         for k in 1:NZ
             for i in 1:NX
