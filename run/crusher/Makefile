@@ -1,10 +1,10 @@
 # example command: srun  -n 2 -- make
 
-#SIM_TIME := 400.0
-OUT_FREQ := 100.0
 SIM_TIME := 100.0
-NX := 200
-NZ := 100
+OUT_FREQ := 100.0
+#SIM_TIME := 100.0
+NX := 100
+NZ := 50
 #SIM_TIME := 10.0 #10.0
 #OUT_FREQ := 10.0 # 10.0
 #NX := 6400 # 640 
@@ -12,15 +12,18 @@ NZ := 100
 
 DATA_SPEC_COLLISION       := 1
 DATA_SPEC_THERMAL         := 2
-DATA_SPEC_MOUNTAIN        := 3
-DATA_SPEC_TURBULENCE      := 4
+DATA_SPEC_GRAVITY_WAVES   := 3
 DATA_SPEC_DENSITY_CURRENT := 5
 DATA_SPEC_INJECTION       := 6
 
 #DATA_SPEC := ${DATA_SPEC_COLLISION}
-DATA_SPEC := ${DATA_SPEC_THERMAL}
+DATA_SPEC := ${DATA_SPEC_GRAVITY_WAVES}
 
-OUT_FILE := /gpfs/alpine/cli133/proj-shared/grnydawn/temp/output.nc
+ACCEL_TYPE := fortran_openacc
+WORK_DIR  := /gpfs/alpine/cli133/proj-shared/grnydawn/temp1
+#WORK_DIR  := /gpfs/alpine/cli133/proj-shared/grnydawn/temp
+DEBUG_DIR := ${WORK_DIR}
+OUT_FILE  := ${WORK_DIR}/output.nc
 
 JULIA := julia --project=.
 
@@ -28,11 +31,14 @@ SRCDIR :=../../src
 JAISRC := ${SRCDIR}/jai/miniWeather_accel.jl
 JLSRC := ${SRCDIR}/julia/miniWeather_mpi.jl
 FORTSRC := ${SRCDIR}/fortran/miniWeather_mpi.F90
-FORTACCSRC := ${SRCDIR}/fortran/miniWeather_openacc.F90
+FORTACCSRC := ${SRCDIR}/fortran/miniWeather_mpi_openacc.F90
+FORTOMPSRC := ${SRCDIR}/fortran/miniWeather_mpi_openmp45.F90
 MANUALJLSRC := ${SRCDIR}/manual/miniWeather_openacc.jl
 MANUALFORTSRC := ${SRCDIR}/manual/openacc_driver_${NX}x${NZ}.F90
 
-ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} -d ${DATA_SPEC} -o ${OUT_FILE}
+ARGS := -s ${SIM_TIME} -x ${NX} -z ${NZ} -f ${OUT_FREQ} \
+		-d ${DATA_SPEC} -o ${OUT_FILE} -w ${WORK_DIR} \
+		-b ${DEBUG_DIR}
 
 CC := cc
 CXX := CC
@@ -45,7 +51,7 @@ MACROS := -D_NX=${NX} -D_NZ=${NZ} -D_SIM_TIME=${SIM_TIME} -D_OUT_FREQ=${OUT_FREQ
 F_FLAGS := ${INCLUDES} ${LIBS} ${MACROS}
 
 jai:
-	${JULIA} --color=yes -O -- ${JAISRC} ${ARGS}
+	${JULIA} --color=yes -O -- ${JAISRC} ${ARGS} -a ${ACCEL_TYPE} 
 
 julia:
 	${JULIA} --color=yes -O -- ${JLSRC} ${ARGS}
@@ -59,9 +65,16 @@ fort: ${FORTSRC}
 fortacc: ${FORTACCSRC}
 	${FC} ${F_FLAGS} -h acc,noomp -o miniweather_fortacc.exe $<
 
+fortomp: ${FORTOMPSRC}
+	${FC} ${F_FLAGS} -h noacc,omp -o miniweather_fortomp.exe $<
+
 manual: ${MANUALFORTSRC}
-	ftn -shared -fPIC -h acc,noomp -o jopenacc.so $<
+	ftn -shared -fPIC -h acc,noomp -o ${WORK_DIR}/jopenacc.so $<
 	${JULIA} ${MANUALJLSRC} ${ARGS}
+
+all: fort fortacc julia jai
+	./miniweather_fort.exe
+	./ miniweather_fortacc.exe
 
 clean:
 	rm -rf *.so core *.mod .jaitmp *.o *.s *.exe output.nc
