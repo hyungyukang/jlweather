@@ -27,7 +27,7 @@ ds_dens = ds["dens"]
 ds_uwnd = ds["uwnd"]
 ds_wwnd = ds["wwnd"]
 ds_theta = ds["theta"]
-ds_shum = ds["shumid"]
+#ds_shum = ds["shumid"]
 
 nt = ds.dim["t"]
 nx = ds.dim["x"]
@@ -50,7 +50,7 @@ for n in 1:nt
     uwnd = ds_uwnd[:,:,n]
     wwnd = ds_wwnd[:,:,n]
     rhot = ds_theta[:,:,n]
-    shum = ds_shum[:,:,n]
+#   shum = ds_shum[:,:,n]
 
     it = @sprintf("%.4i",n)
     ctime = @sprintf("%6.1f",time)
@@ -74,7 +74,7 @@ for n in 1:nt
        xlabel("X (km)")
        ylabel("Z (km)")
        title("Specific humidity")
-       imshow(transpose(reverse(shum,dims=2)),extent=extent,cmap="jet")
+       imshow(transpose(reverse(rhot*0.0,dims=2)),extent=extent,cmap="jet")
     subplot(234)
        xlabel("X (km)")
        ylabel("Z (km)")

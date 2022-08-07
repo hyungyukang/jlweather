@@ -1,10 +1,10 @@
 # example command: srun  -n 2 -- make
 
-SIM_TIME := 100.0
-OUT_FREQ := 100.0
+SIM_TIME := 5000.0
+OUT_FREQ := 500.0
 #SIM_TIME := 100.0
-NX := 100
-NZ := 50
+NX := 200
+NZ := 100
 #SIM_TIME := 10.0 #10.0
 #OUT_FREQ := 10.0 # 10.0
 #NX := 6400 # 640 
@@ -16,21 +16,22 @@ DATA_SPEC_GRAVITY_WAVES   := 3
 DATA_SPEC_DENSITY_CURRENT := 5
 DATA_SPEC_INJECTION       := 6
 
-#DATA_SPEC := ${DATA_SPEC_COLLISION}
-DATA_SPEC := ${DATA_SPEC_GRAVITY_WAVES}
+DATA_SPEC := ${DATA_SPEC_THERMAL}
+#DATA_SPEC := ${DATA_SPEC_GRAVITY_WAVES}
 
 ACCEL_TYPE := fortran_openacc
 WORK_DIR  := /gpfs/alpine/cli133/proj-shared/grnydawn/temp1
 #WORK_DIR  := /gpfs/alpine/cli133/proj-shared/grnydawn/temp
 DEBUG_DIR := ${WORK_DIR}
-OUT_FILE  := ${WORK_DIR}/output.nc
+OUT_FILE  := ./output.nc
 
-JULIA := julia --project=.
+JULIA := mpirun -n 6 julia --project=.
 
 SRCDIR :=../../src
 JAISRC := ${SRCDIR}/jai/miniWeather_accel.jl
-JLSRC := ${SRCDIR}/julia/miniWeather_mpi.jl
-FORTSRC := ${SRCDIR}/fortran/miniWeather_mpi.F90
+JLSRC_DRY := ${SRCDIR}/julia/miniWeather_mpi.jl
+JLSRC := ${SRCDIR}/julia/miniWeather_moist_mpi.jl
+#FORTSRC := ${SRCDIR}/fortran/miniWeather_mpi.F90
 FORTACCSRC := ${SRCDIR}/fortran/miniWeather_mpi_openacc.F90
 FORTOMPSRC := ${SRCDIR}/fortran/miniWeather_mpi_openmp45.F90
 MANUALJLSRC := ${SRCDIR}/manual/miniWeather_openacc.jl
@@ -50,12 +51,12 @@ MACROS := -D_NX=${NX} -D_NZ=${NZ} -D_SIM_TIME=${SIM_TIME} -D_OUT_FREQ=${OUT_FREQ
 
 F_FLAGS := ${INCLUDES} ${LIBS} ${MACROS}
 
-jai:
-	${JULIA} --color=yes -O -- ${JAISRC} ${ARGS} -a ${ACCEL_TYPE} 
-
 julia:
 	${JULIA} --color=yes -O -- ${JLSRC} ${ARGS}
-
+julia_dry:
+	${JULIA} --color=yes -O -- ${JLSRC_DRY} ${ARGS}
+jai:
+	${JULIA} --color=yes -O -- ${JAISRC} ${ARGS} -a ${ACCEL_TYPE} 
 debug:
 	${JULIA} --color=yes --check-bounds=yes -O0 ${SRC} ${ARGS}
 

@@ -104,7 +104,7 @@ const MASTERPROC  = (MYRANK == MASTERRANK)
 
 const HS          = 2
 const STEN_SIZE   = 4 #Size of the stencil used for interpolation
-const NUM_VARS    = 4
+const NUM_VARS    = 5
 const XLEN        = Float64(2.E4) # Length of the domain in the x-direction (meters)
 const ZLEN        = Float64(1.E4) # Length of the domain in the z-direction (meters)
 const HV_BETA     = Float64(0.05) # How strong to diffuse the solution: hv_beta \in [0:1]
@@ -122,11 +122,13 @@ const RD          = Float64(287.0)  # Dry air constant for equation of state (P=
 const P0          = Float64(1.0E5)  # Standard pressure at the surface in Pascals
 const C0          = Float64(27.5629410929725921310572974482)
 const GAMMA       = Float64(1.40027894002789400278940027894)
+const Q0          = Float64(0.01) # Background specific humidity
 
 const ID_DENS     = 1
 const ID_UMOM     = 2
 const ID_WMOM     = 3
 const ID_RHOT     = 4
+const ID_SHUM     = 5
                     
 const DIR_X       = 1 #Integer constant to express that this operation is in the x-direction
 const DIR_Z       = 2 #Integer constant to express that this operation is in the z-direction
@@ -255,6 +257,7 @@ function init!()
       for i in 1-HS:NX+HS
         #Initialize the state to zero
         #Use Gauss-Legendre quadrature to initialize a hydrostatic balance + temperature perturbation
+
         for kk in 1:NQPOINTS
           for ii in 1:NQPOINTS
             #Compute the x,z location within the global domain based on cell and quadrature index
@@ -273,13 +276,17 @@ function init!()
             state[i,k,ID_UMOM] = state[i,k,ID_UMOM] + (r+hr)*u                  * qweights[ii]*qweights[kk]
             state[i,k,ID_WMOM] = state[i,k,ID_WMOM] + (r+hr)*w                  * qweights[ii]*qweights[kk]
             state[i,k,ID_RHOT] = state[i,k,ID_RHOT] + ( (r+hr)*(t+ht) - hr*ht ) * qweights[ii]*qweights[kk]
+            #state[i,k,ID_SHUM] = state[i,k,ID_SHUM] + (r+hr)*0.001              * qweights[ii]*qweights[kk]
+            #println(k,' ',i,' ',hr)
           end
+          #println(k,' ',i,' ',state[i,k,ID_DENS])
         end
         for ll in 1:NUM_VARS
           statetmp[i,k,ll] = state[i,k,ll]
         end
       end
     end
+
 
     for k in 1-HS:NZ+HS
         for kk in 1:NQPOINTS
@@ -294,8 +301,27 @@ function init!()
 
             hy_dens_cell[k]       = hy_dens_cell[k]       + hr    * qweights[kk]
             hy_dens_theta_cell[k] = hy_dens_theta_cell[k] + hr*ht * qweights[kk]
+
+            #state[i,k,ID_SHUM] = state[i,k,ID_SHUM] + (r+hr)*0.001              * qweights[ii]*qweights[kk]
         end
     end
+
+#--------------
+    qq0 = 0.021
+    qqt = 1.0e-11
+    zq1 = 2000.0
+    zq2 = 5000.0
+    zzt = 8000.0
+
+    for k in 1-HS:NZ+HS
+        z = (K_BEG-1 + k-0.5) * DZ
+        state[:,k,ID_SHUM] .= (0.021 * exp(-z/zq1)*exp(-(z/zq2)^2)) * hy_dens_cell[k]
+        if zzt <= z
+           state[:,k,ID_SHUM] .= qqt * hy_dens_cell[k]
+        end
+        #state[:,k,ID_SHUM] .= 0.0
+    end
+#--------------
     
     #Compute the hydrostatic background state at vertical cell interfaces
     for k in 1:NZ+1
@@ -311,7 +337,7 @@ function init!()
         hy_dens_theta_int[k] = hr*ht
         hy_pressure_int[k] = C0*(hr*ht)^GAMMA
     end
-    
+
     return (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
             sendbuf_r, recvbuf_l, recvbuf_r)
@@ -596,6 +622,11 @@ function semi_discrete_step!(state_init::OffsetArray{Float64, 3, Array{Float64, 
                 end
 
                 state_out[i,k,ll] = state_init[i,k,ll] + dt * tend[i,k,ll]
+     
+#               if ll == ID_SHUM
+#                  if (state_out[i,k,ll] + Q0) < 0.0
+#                     state_out[i,k,ll] = state_out[i,k,ll] 
+                    
             end
         end
     end
@@ -710,13 +741,21 @@ function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
             u = vals[ID_UMOM] / r
             w = vals[ID_WMOM] / r
             t = ( vals[ID_RHOT] + hy_dens_theta_cell[k] ) / r
-            p = C0*(r*t)^GAMMA
+            #q = (vals[ID_SHUM] + Q0 * hy_dens_cell[k] ) / r
+            q = ( vals[ID_SHUM] ) / r
+
+            # Specific humidity constraint (no negative)
+            if ( q < 0.0 ) ; q = 0.0 ; end
+
+            #p = C0*(r*t)^GAMMA
+            p = C0*(r*t*(1+0.61*q))^GAMMA
 
             #Compute the flux vector
             flux[i,k,ID_DENS] = r*u     - hv_coef*d3_vals[ID_DENS]
             flux[i,k,ID_UMOM] = r*u*u+p - hv_coef*d3_vals[ID_UMOM]
             flux[i,k,ID_WMOM] = r*u*w   - hv_coef*d3_vals[ID_WMOM]
             flux[i,k,ID_RHOT] = r*u*t   - hv_coef*d3_vals[ID_RHOT]
+            flux[i,k,ID_SHUM] = r*u*q   - hv_coef*d3_vals[ID_SHUM]
         end # i
     end # k
     
@@ -794,7 +833,15 @@ function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
         u = vals[ID_UMOM] / r
         w = vals[ID_WMOM] / r
         t = ( vals[ID_RHOT] + hy_dens_theta_int[k] ) / r
-        p = C0*(r*t)^GAMMA - hy_pressure_int[k]
+        #q = (vals[ID_SHUM] + Q0 * hy_dens_int[k]) / r
+        q = (vals[ID_SHUM]) / r
+ 
+        # Specific humidity constraint (no negative)
+        if ( q < 0.0 ) ; q = 0.0 ; end
+
+        #p = C0*(r*t)^GAMMA - hy_pressure_int[k]
+        p = C0*(r*t*(1+0.61*q))^GAMMA - hy_pressure_int[k]
+
         #Enforce vertical boundary condition and exact mass conservation
         if (k == 1 || k == NZ+1) 
           w                = 0
@@ -806,6 +853,7 @@ function compute_tendencies_z!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
         flux[i,k,ID_UMOM] = r*w*u   - hv_coef*d3_vals[ID_UMOM]
         flux[i,k,ID_WMOM] = r*w*w+p - hv_coef*d3_vals[ID_WMOM]
         flux[i,k,ID_RHOT] = r*w*t   - hv_coef*d3_vals[ID_RHOT]
+        flux[i,k,ID_SHUM] = r*w*q   - hv_coef*d3_vals[ID_SHUM]
       end
     end
 
@@ -871,6 +919,9 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
             var_local[i,k,ID_UMOM]  = state[i,k,ID_UMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
             var_local[i,k,ID_WMOM]  = state[i,k,ID_WMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
             var_local[i,k,ID_RHOT] = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / ( hy_dens_cell[k] + state[i,k,ID_DENS] ) - hy_dens_theta_cell[k] / hy_dens_cell[k]
+            #var_local[i,k,ID_SHUM]  = (state[i,k,ID_SHUM] + Q0) / (hy_dens_cell[k] + state[i,k,ID_DENS])
+            #var_local[i,k,ID_SHUM]  = (state[i,k,ID_SHUM] + Q0 * hy_dens_cell[k]) / (hy_dens_cell[k] + state[i,k,ID_DENS])
+            var_local[i,k,ID_SHUM]  = (state[i,k,ID_SHUM]) / (hy_dens_cell[k] + state[i,k,ID_DENS])
         end
     end
 
@@ -924,6 +975,8 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
           nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
           nc_var = defVar(ds,"theta",Float64,("x","z","t"))
           nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+          nc_var = defVar(ds,"shumid",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_SHUM]
 
           # Close NetCDF file
           close(ds)
@@ -943,6 +996,8 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
           nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
           nc_var = ds["theta"]
           nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
+          nc_var = ds["shumid"]
+          nc_var[:,:,nt] = var_global[:,:,ID_SHUM]
 
           # Close NetCDF file
           close(ds)
