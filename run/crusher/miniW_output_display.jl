@@ -56,7 +56,7 @@ for n in 1:nt
     ctime = @sprintf("%6.1f",time)
 
     # Display
-    fig = figure("out",figsize=(12,5.5))
+    fig = figure("out",figsize=(13,5.5))
     subplots_adjust(hspace=0.1)
     suptitle(string("Julia Miniweather
             \nnx=",nx,"; nz=",nz,"; Time=",ctime," s"))

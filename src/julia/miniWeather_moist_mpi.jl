@@ -32,6 +32,8 @@ import Printf.@printf
 
 import Libdl
 
+include("simple_phys_xz.jl")
+
 ##############
 # constants
 ##############
@@ -123,6 +125,7 @@ const P0          = Float64(1.0E5)  # Standard pressure at the surface in Pascal
 const C0          = Float64(27.5629410929725921310572974482)
 const GAMMA       = Float64(1.40027894002789400278940027894)
 const Q0          = Float64(0.01) # Background specific humidity
+const LRATE       = Float64(0.0015)
 
 const ID_DENS     = 1
 const ID_UMOM     = 2
@@ -191,6 +194,21 @@ function main(args::Vector{String})
         perform_timestep!(state, statetmp, flux, tend, dt, recvbuf_l, recvbuf_r,
                   sendbuf_l, sendbuf_r, hy_dens_cell, hy_dens_theta_cell,
                   hy_dens_int, hy_dens_theta_int, hy_pressure_int)
+
+        #Perform physics parameterizations
+
+
+        #Set the halo values for this MPI task's fluid state in the x-direction
+        #set_halo_values_x!(state, recvbuf_l, recvbuf_r, sendbuf_l,
+        #                   sendbuf_r, hy_dens_cell, hy_dens_theta_cell)
+
+        #Set the halo values for this MPI task's fluid state in the z-direction
+        #set_halo_values_z!(state, hy_dens_cell, hy_dens_theta_cell)
+
+        simple_physics!(NX,NZ,dt,state,hy_dens_cell,hy_dens_theta_cell,
+                        hy_dens_int,hy_dens_theta_int,hy_pressure_int)
+
+        #println(maximum(state[:,:,ID_UMOM]),' ',maximum(state[:,:,ID_WMOM]))
 
         #Update the elapsed time and output counter
         etime = etime + dt
@@ -276,10 +294,7 @@ function init!()
             state[i,k,ID_UMOM] = state[i,k,ID_UMOM] + (r+hr)*u                  * qweights[ii]*qweights[kk]
             state[i,k,ID_WMOM] = state[i,k,ID_WMOM] + (r+hr)*w                  * qweights[ii]*qweights[kk]
             state[i,k,ID_RHOT] = state[i,k,ID_RHOT] + ( (r+hr)*(t+ht) - hr*ht ) * qweights[ii]*qweights[kk]
-            #state[i,k,ID_SHUM] = state[i,k,ID_SHUM] + (r+hr)*0.001              * qweights[ii]*qweights[kk]
-            #println(k,' ',i,' ',hr)
           end
-          #println(k,' ',i,' ',state[i,k,ID_DENS])
         end
         for ll in 1:NUM_VARS
           statetmp[i,k,ll] = state[i,k,ll]
@@ -307,19 +322,27 @@ function init!()
     end
 
 #--------------
-    qq0 = 0.021
-    qqt = 1.0e-11
-    zq1 = 2000.0
-    zq2 = 5000.0
-    zzt = 8000.0
+    # Initial specific humidity setup (Reed and Jablonowski 2012, TC test case)
+
+#   qq0 = 0.021
+#   qqt = 1.0e-11
+#   zq1 = 2000.0
+#   zq2 = 5000.0
+#   zzt = 8000.0
+
+    qq0 = Float64(0.010)
+    qqt = Float64(1.0e-11)
+    zq1 = Float64(1000.0)
+    zq2 = Float64(3000.0)
+    zzt = Float64(5000.0)
 
     for k in 1-HS:NZ+HS
         z = (K_BEG-1 + k-0.5) * DZ
-        state[:,k,ID_SHUM] .= (0.021 * exp(-z/zq1)*exp(-(z/zq2)^2)) * hy_dens_cell[k]
+        state[:,k,ID_SHUM] .= (qq0 * exp(-z/zq1)*exp(-(z/zq2)^2)) * hy_dens_cell[k]
         if zzt <= z
            state[:,k,ID_SHUM] .= qqt * hy_dens_cell[k]
         end
-        #state[:,k,ID_SHUM] .= 0.0
+        #state[:,k,ID_SHUM] .= 1.0e-12 * hy_dens_cell[k]
     end
 #--------------
     
@@ -396,7 +419,11 @@ function thermal!(x::Float64, z::Float64)
     u  = Float64(0.0) # Uwind
     w  = Float64(0.0) # Wwind
     
-    t = t + sample_ellipse_cosine!(x,z,3.0,XLEN/2,2000.0,2000.0,2000.0) 
+    t  = Float64(0.0) # Wwind
+
+    #t = t + sample_ellipse_cosine!(x,z,3.0,XLEN/2,2000.0,2000.0,2000.0) 
+
+    #t = t + sample_ellipse_cosine!(x,z,3.0,XLEN/2,1000.0,500.0,500.0) 
 
     return r, u, w, t, hr, ht
 end
@@ -424,10 +451,15 @@ function hydro_const_theta!(z::Float64)
     r      = Float64(0.0) # Density
     t      = Float64(0.0) # Potential temperature
 
-    theta0 = Float64(300.0) # Background potential temperature
+    #theta0 = Float64(300.0) # Background potential temperature
+
+    theta0 = Float64(290.0) # Background potential temperature
+
     exner0 = Float64(1.0)   # Surface-level Exner pressure
 
     t      = theta0                            # Potential temperature at z
+    #t      = theta0 + z * LRATE                # Potential temperature at z
+
     exner  = exner0 - GRAV * z / (CP * theta0) # Exner pressure at z
     p      = P0 * exner^(CP/RD)                # Pressure at z
     rt     = (p / C0)^(Float64(1.0)/GAMMA)     # rho*theta at z
@@ -741,7 +773,6 @@ function compute_tendencies_x!(state::OffsetArray{Float64, 3, Array{Float64, 3}}
             u = vals[ID_UMOM] / r
             w = vals[ID_WMOM] / r
             t = ( vals[ID_RHOT] + hy_dens_theta_cell[k] ) / r
-            #q = (vals[ID_SHUM] + Q0 * hy_dens_cell[k] ) / r
             q = ( vals[ID_SHUM] ) / r
 
             # Specific humidity constraint (no negative)

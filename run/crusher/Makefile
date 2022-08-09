@@ -1,10 +1,10 @@
 # example command: srun  -n 2 -- make
 
-SIM_TIME := 5000.0
-OUT_FREQ := 500.0
+SIM_TIME := 10000.0
+OUT_FREQ := 50.0
 #SIM_TIME := 100.0
-NX := 200
-NZ := 100
+NX :=  200
+NZ :=  100
 #SIM_TIME := 10.0 #10.0
 #OUT_FREQ := 10.0 # 10.0
 #NX := 6400 # 640 
@@ -25,7 +25,8 @@ WORK_DIR  := /gpfs/alpine/cli133/proj-shared/grnydawn/temp1
 DEBUG_DIR := ${WORK_DIR}
 OUT_FILE  := ./output.nc
 
-JULIA := mpirun -n 6 julia --project=.
+#JULIA := julia --project=.
+JULIA := mpirun -n 8 julia --project=.
 
 SRCDIR :=../../src
 JAISRC := ${SRCDIR}/jai/miniWeather_accel.jl

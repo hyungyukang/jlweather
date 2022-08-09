@@ -88,71 +88,37 @@
 #            J. Adv. Model. Earth Syst., Vol. 4, M04001, doi:10.1029/2011MS000099
 #-----------------------------------------------------------------------
 
-function simple_physics!(pcols::Int, 
-                         pver::Int,
-                         dtime::Float64,
-                         state::OffsetArray{Float64, 3, Array{Float64, 3}},
+function simple_physics!(pcols::Int,              # Set number of atmospheric columns
+                         pver::Int,               # Set number of model levels
+                         dtime::Float64,          # Set model physics timestep
+                         state::OffsetArray{Float64, 3, Array{Float64, 3}},     # State
                          hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                          hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}},
                          hy_dens_int::Vector{Float64},
                          hy_dens_theta_int::Vector{Float64},
                          hy_pressure_int::Vector{Float64})
-#                        t::Array{Float64,2},
-#                        q::Array{Float64,2},
-#                        u::Array{Float64,2},
-#                        pmid::Array{Float64,2},
-#                        pint::Array{Float64,2},
-#                        pdel::Array{Float64,2},
-#                        rpdel::Array{Float64},
-#                        ps::Vector{Float64},
-#                        precl::Vector{Float64})
-#                        test,
-#                        RJ2012_precip,
+
+#                        precl::Vector{Float64})  # Precipitation rate (m_water / s)
+
+#                        t::Array{Float64,2},     # Temperature at full-model level (K)
+#                        q::Array{Float64,2},     # Specific Humidity at full-model level (kg/kg)
+#                        u::Array{Float64,2},     # Zonal wind at full-model level (m/s)
+#                        pmid::Array{Float64,2},  # Pressure is full-model level (Pa)
+#                        pint::Array{Float64,2},  # Pressure at model interfaces (Pa)
+#                        pdel::Array{Float64,2},  # Layer thickness (Pa)
+#                        rpdel::Array{Float64},   # Reciprocal of layer thickness (1/Pa)
+#                        ps::Vector{Float64},     # Surface Pressue (Pa)
+#                        test,                    # Test number
+#                        RJ2012_precip,           
 #                        TC_PBL_mod)
 
-# ! use physics_types     , only: physics_dme_adjust   ! This is for CESM/CAM
-# ! use cam_diagnostics,    only: diag_phys_writeout   ! This is for CESM/CAM
 
-#  implicit none
-
-#  integer, parameter :: r8 = selected_real_kind(12)
-
-#
-# Input arguments - MODEL DEPENDENT
-#
-#  integer, intent[in)  :: pcols        ! Set number of atmospheric columns
-#  integer, intent[in)  :: pver         ! Set number of model levels
-#  real(r8), intent[in) :: dtime        ! Set model physics timestep
-#  integer, intent[in)  :: test         ! Test number
-#  logical, intent[in)  :: RJ2012_precip
-#  logical, intent[in)  :: TC_PBL_mod
-
-#
-# Input/Output arguments
-#
-#  pcols is the maximum number of vertical columns per 'chunk' of atmosphere
-#
-#  real(r8), intent[inout) :: t(pcols,pver)      ! Temperature at full-model level (K)
-#  real(r8), intent[inout) :: q(pcols,pver)      ! Specific Humidity at full-model level (kg/kg)
-#  real(r8), intent[inout) :: u(pcols,pver)      ! Zonal wind at full-model level (m/s)
-#  real(r8), intent[inout) :: v(pcols,pver)      ! Meridional wind at full-model level (m/s)
-#  real(r8), intent[inout) :: pmid(pcols,pver)   ! Pressure is full-model level (Pa)
-#  real(r8), intent[inout) :: pint(pcols,pver+1) ! Pressure at model interfaces (Pa)
-#  real(r8), intent[inout) :: pdel(pcols,pver)   ! Layer thickness (Pa)
-#  real(r8), intent[inout) :: rpdel(pcols,pver)  ! Reciprocal of layer thickness (1/Pa)
-#  real(r8), intent[inout) :: ps(pcols)          ! Surface Pressue (Pa)
-
-# Output arguments
-#
-#  real(r8), intent(out) :: precl(pcols)         ! Precipitation rate (m_water / s)
-
+                         test = 0
+                         RJ2012_precip = false
+                         TC_PBL_mod = false
 #
 #---------------------------Local workspace-----------------------------
 #
-
-# Integers for loops
-
-#  integer  i,k                         ! Longitude, level indices
 
 # Physical Constants - Many of these may be model dependent
 
@@ -198,10 +164,6 @@ function simple_physics!(pcols::Int,
 # real(r8) dudt(pcols,pver)             ! Zonal wind tendency
 # real(r8) dvdt(pcols,pver)             ! Meridional wind tendency
 
-  dtdt = Array{Float64}(undef, pcols, pver)
-  dqdt = Array{Float64}(undef, pcols, pver)
-  dudt = Array{Float64}(undef, pcols, pver)
-  dvdt = Array{Float64}(undef, pcols, pver)
 
 # Temporary variables for tendency calculations
 
@@ -210,8 +172,6 @@ function simple_physics!(pcols::Int,
 #  real(r8) qsats                       ! Saturation vapor pressure of SST
 
 # Variables for Boundary Layer Calculation
-
-   wind = 
 
 #  real(r8) wind(pcols)                 ! Magnitude of Wind
 #  real(r8) Cd(pcols)                   ! Drag coefficient for momentum
@@ -231,10 +191,61 @@ function simple_physics!(pcols::Int,
 #  real(r8) CCm(pcols,pver)             ! Matrix Coefficents for PBL Scheme
 #  real(r8) CEm(pcols,pver+1)           ! Matrix Coefficents for PBL Scheme
 #  real(r8) CFu(pcols,pver+1)           ! Matrix Coefficents for PBL Scheme
-#  real(r8) CFv(pcols,pver+1)           ! Matrix Coefficents for PBL Scheme
 #  real(r8) CFt(pcols,pver+1)           ! Matrix Coefficents for PBL Scheme
 #  real(r8) CFq(pcols,pver+1)           ! Matrix Coefficents for PBL Scheme
 
+   t     = Array{Float64}(undef, pcols,pver)   # Temperature at full-model level (K)
+   q     = Array{Float64}(undef, pcols,pver)   # Specific Humidity at full-model level (kg/kg)
+   u     = Array{Float64}(undef, pcols,pver)   # Zonal wind at full-model level (m/s)
+   w     = Array{Float64}(undef, pcols,pver)   # Zonal wind at full-model level (m/s)
+   pmid  = Array{Float64}(undef, pcols,pver) 
+   pint  = Array{Float64}(undef, pcols,pver+1)
+   pdel  = Array{Float64}(undef, pcols,pver)
+   rpdel = Array{Float64}(undef, pcols,pver) 
+   ps    = Vector{Float64}(undef, pcols)
+
+#-----------------------------------------------------
+   for k in 1:pver
+       for i in 1:pcols
+           r                =  state[i,k,ID_DENS] + hy_dens_cell[k]
+           tt               = (state[i,k,ID_RHOT] + hy_dens_theta_cell[k]) / r
+           u[i,pver-k+1]    =  state[i,k,ID_UMOM] / r
+           w[i,pver-k+1]    =  state[i,k,ID_WMOM] / r
+           q[i,pver-k+1]    =  state[i,k,ID_SHUM] / r
+           pmid[i,pver-k+1] = C0*(r*tt*(1+0.61*q[i,pver-k+1]))^GAMMA
+           t[i,pver-k+1]    = tt * (P0/pmid[i,pver-k+1])^(-(RD/CP))
+       end
+   end 
+
+   for k in 1:pver+1
+       for i in 1:pcols
+           r  =  state[i,k,ID_DENS] + hy_dens_int[k]
+           tt = (state[i,k,ID_RHOT] + hy_dens_theta_int[k]) / r
+           qq =  state[i,k,ID_SHUM] / r
+           pint[i,pver+1-k+1] = C0*(r*tt*(1+0.61*qq))^GAMMA
+       end
+   end
+
+   for k in 1:pver
+       for i in 1:pcols
+           pdel[i,k]  = pint[i,k+1] - pint[i,k]
+           rpdel[i,k] = 1.0 / pdel[i,k]
+       end
+   end
+  
+   for i in 1:pcols
+       ps[i] = pint[i,pver+1]
+   end
+#-----------------------------------------------------
+
+#  pmid::Array{Float64,2},  # Pressure is full-model level (Pa)
+#  pint::Array{Float64,2},  # Pressure at model interfaces (Pa)
+#  pdel::Array{Float64,2},  # Layer thickness (Pa)
+#  rpdel::Array{Float64},   # Reciprocal of layer thickness (1/Pa)
+#  ps::Vector{Float64},     # Surface Pressue (Pa)
+
+   Tsurf = Vector{Float64}(undef, pcols)
+   precl = Vector{Float64}(undef, pcols)
    wind = Vector{Float64}(undef, pcols)       # Magnitude of Wind
    Cd = Vector{Float64}(undef, pcols)         # Drag coefficient for momentum
    Km = Array{Float64}(undef, pcols,pver+1)   # Eddy diffusivity for boundary layer calculations 
@@ -253,15 +264,15 @@ function simple_physics!(pcols::Int,
    CCm = Array{Float64}(undef, pcols,pver)    # Matrix Coefficents for PBL Scheme
    CEm = Array{Float64}(undef, pcols,pver+1)  # Matrix Coefficents for PBL Scheme
    CFu = Array{Float64}(undef, pcols,pver+1)  # Matrix Coefficents for PBL Scheme
-   CFv = Array{Float64}(undef, pcols,pver+1)  # Matrix Coefficents for PBL Scheme
    CFt = Array{Float64}(undef, pcols,pver+1)  # Matrix Coefficents for PBL Scheme
    CFq = Array{Float64}(undef, pcols,pver+1)  # Matrix Coefficents for PBL Scheme
-
 
 # Variable for Dry Mass Adjustment, this dry air adjustment is necessary to
 # conserve the mass of the dry air
 
-   qini = Array{Float64}(undef, pcols,pver)   # Initial specific humidity
+#  qini = Array{Float64}(undef, pcols,pver)   # Initial specific humidity
+#  tini = Array{Float64}(undef, pcols,pver)   # Initial specific humidity
+#  uini = Array{Float64}(undef, pcols,pver)   # Initial specific humidity
 
 #-----------------------------------------------------------------------------
 #
@@ -269,15 +280,15 @@ function simple_physics!(pcols::Int,
 #
 #-----------------------------------------------------------------------------
 
-   gravit = 9.80616                  # Gravity (9.80616 m/s^2)
-   rair   = 287.0                    # Gas constant for dry air: 287 J/(kg K)
-   cpair  = 1.0045e3                 # Specific heat of dry air: here we use 1004.5 J/(kg K)
-   latvap = 2.5e6                    # Latent heat of vaporization (J/kg)
-   rh2o   = 461.5                    # Gas constant for water vapor: 461.5 J/(kg K)
-   epsilo = rair/rh2o                # Ratio of gas constant for dry air to that for vapor
-   zvir   = (rh2o/rair) - 1.0        # Constant for virtual temp. calc. =(rh2o/rair) - 1 is approx. 0.608
-   a      = 6371220.0                # Reference Earth's Radius (m)
-   omega  = 7.29212e-5               # Reference rotation rate of the Earth (s^-1)
+   gravit = Float64(9.80616)                 # Gravity (9.80616 m/s^2)
+   rair   = Float64(287.0)                   # Gas constant for dry air: 287 J/(kg K)
+   cpair  = Float64(1.0045e3)                # Specific heat of dry air: here we use 1004.5 J/(kg K)
+   latvap = Float64(2.5e6)                   # Latent heat of vaporization (J/kg)
+   rh2o   = Float64(461.5)                   # Gas constant for water vapor: 461.5 J/(kg K)
+   epsilo = Float64(rair/rh2o)               # Ratio of gas constant for dry air to that for vapor
+   zvir   = Float64((rh2o/rair) - 1.0)       # Constant for virtual temp. calc. =(rh2o/rair) - 1 is approx. 0.608
+   a      = Float64(6371220.0)               # Reference Earth's Radius (m)
+   omega  = Float64(7.29212e-5)              # Reference rotation rate of the Earth (s^-1)
 #  pi     = 4.0*atan(1.0)            # pi
 
 #-----------------------------------------------------------------------------
@@ -285,26 +296,27 @@ function simple_physics!(pcols::Int,
 # Local Constants for Simple Physics
 #
 #-----------------------------------------------------------------------------
-      C        = 0.0011            # From Simth and Vogl 2008
-      SST_TC   = 302.15            # Constant Value for SST
-      T0       = 273.16            # control temp for calculation of qsat
-      e0       = 610.78            # saturation vapor pressure at T0 for calculation of qsat
-      rhow     = 1000.0            # Density of Liquid Water 
-      Cd0      = 0.0007            # Constant for Cd calc. Simth and Vogl 2008
-      Cd1      = 0.000065          # Constant for Cd calc. Simth and Vogl 2008
-      Cm       = 0.002             # Constant for Cd calc. Simth and Vogl 2008
-      v20      = 20.0              # Threshold wind speed for calculating Cd from Smith and Vogl 2008
-      p0       = 100000.0          # Constant for potential temp calculation
-      pbltop   = 85000.0           # Top of boundary layer in p
-      zpbltop  = 1000.0            # Top of boundary layer in z
-      pblconst = 10000.0           # Constant for the calculation of the decay of diffusivity
-      T00      = 288.0             # Horizontal mean T at surface for moist baro test
-      u0       = 35.0              # Zonal wind constant for moist baro test
-      latw     = 2.0*pi/9.0        # Halfwidth for  for baro test
-      eta0     = 0.252             # Center of jets (hybrid) for baro test
-      etav     = (1.0-eta0)*0.5*pi # Auxiliary variable for baro test
-      q0       = 0.021             # Maximum specific humidity for baro test
-      kappa    = 0.4               # von Karman constant
+   C        = Float64(0.0011)           # From Simth and Vogl 2008
+   #SST_TC   = Float64(302.15)           # Constant Value for SST
+   SST_TC   = Float64(299.15)           # Constant Value for SST
+   T0       = Float64(273.16)           # control temp for calculation of qsat
+   e0       = Float64(610.78)           # saturation vapor pressure at T0 for calculation of qsat
+   rhow     = Float64(1000.0)           # Density of Liquid Water 
+   Cd0      = Float64(0.0007)           # Constant for Cd calc. Simth and Vogl 2008
+   Cd1      = Float64(0.000065)         # Constant for Cd calc. Simth and Vogl 2008
+   Cm       = Float64(0.002)            # Constant for Cd calc. Simth and Vogl 2008
+   v20      = Float64(20.0)             # Threshold wind speed for calculating Cd from Smith and Vogl 2008
+   p0       = Float64(100000.0)         # Constant for potential temp calculation
+   pbltop   = Float64(85000.0)          # Top of boundary layer in p
+   zpbltop  = Float64(1000.0)           # Top of boundary layer in z
+   pblconst = Float64(10000.0)          # Constant for the calculation of the decay of diffusivity
+   T00      = Float64(288.0)            # Horizontal mean T at surface for moist baro test
+   u0       = Float64(35.0)             # Zonal wind constant for moist baro test
+   latw     = Float64(2.0*pi/9.0)       # Halfwidth for  for baro test
+   eta0     = Float64(0.252)            # Center of jets (hybrid) for baro test
+   etav     = Float64((1.0-eta0)*0.5*pi)# Auxiliary variable for baro test
+   q0       = Float64(0.021)            # Maximum specific humidity for baro test
+   kappa    = Float64(0.4)              # von Karman constant
 
 #-----------------------------------------------------------------------------
 #
@@ -317,41 +329,74 @@ function simple_physics!(pcols::Int,
      for i in 1:pcols
         dlnpint = log(ps[i]) - log(pint[i,pver])  # ps[i] is identical to pint[i,pver+1), note: this is the correct sign (corrects typo in JAMES paper) 
         za[i] = rair/gravit*t[i,pver]*(1.0+zvir*q[i,pver])*0.50*dlnpint
-        zi[i,pver+1] = 0.00
+        zi[i,pver+1] = Float64(0.0)
      end
 #
 # Set Initial Specific Humidity
 #
-     qini = q
+#    qini = q
+#    uini = u
+#    tini = t
 #
 # Set Sea Surface Temperature (constant for tropical cyclone)
 # Tsurf needs to be dependent on latitude for moist baroclinic wave test
 # Tsurf needs to be constant for tropical cyclone test
 #
-     if (test == 1) # Moist Baroclinic Wave Test
-        for i in 1:pcols
-           Tsurf[i] = (T00 + pi*u0/rair * 1.50 * sin(etav) * (cos(etav))^0.50 *
-                       ((-2.0*(sin(lat[i]))^6 * ((cos(lat[i]))^2 + 1.0/3.0) + 10.0/63.0) *
-                       u0 * (cos(etav))^1.50 +
-                       (8.0/5.0*(cos(lat[i]))^3 * ((sin(lat[i]))^2 + 2.0/3.0) - pi/4.0)*a*omega*0.50 )) /
-                       (1.0+zvir*q0*exp(-(lat[i]/latw)^4))
+
+#    if (test == 1) # Moist Baroclinic Wave Test
+#       for i in 1:pcols
+#          Tsurf[i] = (T00 + pi*u0/rair * 1.50 * sin(etav) * (cos(etav))^0.50 *
+#                      ((-2.0*(sin(lat[i]))^6 * ((cos(lat[i]))^2 + 1.0/3.0) + 10.0/63.0) *
+#                      u0 * (cos(etav))^1.50 +
+#                      (8.0/5.0*(cos(lat[i]))^3 * ((sin(lat[i]))^2 + 2.0/3.0) - pi/4.0)*a*omega*0.50 )) /
+#                      (1.0+zvir*q0*exp(-(lat[i]/latw)^4))
+#       end
+
+#    elseif (test == 0) # Tropical Cyclone Test
+
+     x0 = XLEN/2.0
+     #xrad = 500.0
+     xrad = Float64(2000.0)
+     amp = Float64(3.0)
+     Tsurf[:] .= SST_TC
+     for i in 1:pcols
+        for ii in 1:NQPOINTS
+
+           x = (I_BEG-1 + i-0.5) * DX + (qpoints[ii]-0.5)*DX
+           #dist = sqrt(((x-x0)/xrad)^2) * PI / Float64(2.0)
+
+           val = amp * exp(-((x-x0)/xrad)^2)
+           Tsurf[i] = Tsurf[i] + val * qweights[ii]
+
+#             #Tsurf[i] = SST_TC + val * qweights[ii]
+
+#          if ( dist <= PI / Float64(2.0) )
+#             val = amp * cos(dist)^2
+#             #Tsurf[i] = SST_TC + val * qweights[ii]
+#             Tsurf[i] = Tsurf[i] + val * qweights[ii]
+#          else
+#             val = Float64(0.0)
+#             Tsurf[i] = Tsurf[i] + val * qweights[ii]
+#          end
+
         end
-     elseif (test == 0) # Tropical Cyclone Test
-        for i in 1:pcols
-           Tsurf[i] = SST_TC
-        end
+#     println(i,' ',Tsurf[i],' ',t[i,pver])
      end
+    
+#    Tsurf[:] .= SST_TC
+
+#    end
 
 #-----------------------------------------------------------------------------
 #
 # Set initial physics time tendencies and precipitation field to zero
 #
 #-----------------------------------------------------------------------------
-     dtdt = 0.0            # initialize temperature tendency with zero
-     dqdt = 0.0            # initialize specific humidity tendency with zero
-     dudt = 0.0            # initialize zonal wind tendency with zero
-     dvdt = 0.0            # initialize meridional wind tendency with zero
-     precl = 0.0           # initialize precipitation rate with zero
+     dtdt  = zeros(Float64, pcols, pver)
+     dqdt  = zeros(Float64, pcols, pver)
+     dudt  = zeros(Float64, pcols, pver)
+     dvdt  = zeros(Float64, pcols, pver)
+     precl = zeros(Float64, pcols)           # initialize precipitation rate with zero
 
 #-----------------------------------------------------------------------------
 #
@@ -408,7 +453,8 @@ function simple_physics!(pcols::Int,
 # Compute magnitude of the wind and drag coeffcients for turbulence scheme
 #
      for i in 1:pcols
-        wind[i] = sqrt(u[i,pver]^2+v[i,pver]^2)
+        #wind[i] = sqrt(u[i,pver]^2)
+        wind[i] = sqrt(u[i,pver]^2+w[i,pver]^2)
      end
      for i in 1:pcols
         if( wind[i] < v20)
@@ -423,6 +469,7 @@ function simple_physics!(pcols::Int,
         for i in 1:pcols
            dlnpint = log(pint[i,k+1]) - log(pint[i,k])
            zi[i,k] = zi[i,k+1]+rair/gravit*t[i,k]*(1.0+zvir*q[i,k])*dlnpint
+           za[i]   = rair/gravit*t[i,pver]*(1.0+zvir*q[i,pver])*0.50*dlnpint
            if( zi[i,k] <= zpbltop)
               Km[i,k] = kappa*sqrt(Cd[i])*wind[i]*zi[i,k]*(1.0-zi[i,k]/zpbltop)*(1.0-zi[i,k]/zpbltop)
               Ke[i,k] = kappa*sqrt(C)*wind[i]*zi[i,k]*(1.0-zi[i,k]/zpbltop)*(1.0-zi[i,k]/zpbltop) 
@@ -455,15 +502,13 @@ function simple_physics!(pcols::Int,
 # moist baroclinic wave test 
 #-----------------------------------------------------------------------------
      for i in 1:pcols
-        qsats = epsilo*e0/ps[i]*exp(-latvap/rh2o*((1.0/Tsurf[i])-1.0/T0))
+        qsats        = epsilo*e0/ps[i]*exp(-latvap/rh2o*((1.0/Tsurf[i])-1.0/T0))
         dudt[i,pver] = dudt[i,pver] + (u[i,pver]/(1.0+Cd[i]*wind[i]*dtime/za[i])-u[i,pver])/dtime
-        dvdt[i,pver] = dvdt[i,pver] + (v[i,pver]/(1.0+Cd[i]*wind[i]*dtime/za[i])-v[i,pver])/dtime
-        u[i,pver] = u[i,pver]/(1.0+Cd[i]*wind[i]*dtime/za[i])
-        v[i,pver] = v[i,pver]/(1.0+Cd[i]*wind[i]*dtime/za[i])
+        u[i,pver]    = u[i,pver]/(1.0+Cd[i]*wind[i]*dtime/za[i])
         dtdt[i,pver] = dtdt[i,pver] +((t[i,pver]+C*wind[i]*Tsurf[i]*dtime/za[i])/(1.0+C*wind[i]*dtime/za[i])-t[i,pver])/dtime 
-        t[i,pver] = (t[i,pver]+C*wind[i]*Tsurf[i]*dtime/za[i])/(1.0+C*wind[i]*dtime/za[i])  
+        t[i,pver]    = (t[i,pver]+C*wind[i]*Tsurf[i]*dtime/za[i])/(1.0+C*wind[i]*dtime/za[i])  
         dqdt[i,pver] = dqdt[i,pver] +((q[i,pver]+C*wind[i]*qsats*dtime/za[i])/(1.0+C*wind[i]*dtime/za[i])-q[i,pver])/dtime
-        q[i,pver] = (q[i,pver]+C*wind[i]*qsats*dtime/za[i])/(1.0+C*wind[i]*dtime/za[i])
+        q[i,pver]    = (q[i,pver]+C*wind[i]*qsats*dtime/za[i])/(1.0+C*wind[i]*dtime/za[i])
      end
 
 #-----------------------------------------------------------------------------
@@ -473,31 +518,29 @@ function simple_physics!(pcols::Int,
 #
       for k in 1:pver-1
          for i in 1:pcols
-            rho = (pint[i,k+1]/(rair*(t[i,k+1]*(1.0+zvir*q[i,k+1])+t[i,k]*(1.0+zvir*q[i,k]))/2.00)) 
-            CAm[i,k] = rpdel[i,k]*dtime*gravit*gravit*Km[i,k+1]*rho*rho/(pmid[i,k+1]-pmid[i,k])    
+            rho        = (pint[i,k+1]/(rair*(t[i,k+1]*(1.0+zvir*q[i,k+1])+t[i,k]*(1.0+zvir*q[i,k]))/2.00)) 
+            CAm[i,k]   = rpdel[i,k]*dtime*gravit*gravit*Km[i,k+1]*rho*rho/(pmid[i,k+1]-pmid[i,k])    
             CCm[i,k+1] = rpdel[i,k+1]*dtime*gravit*gravit*Km[i,k+1]*rho*rho/(pmid[i,k+1]-pmid[i,k])
-            CA[i,k] = rpdel[i,k]*dtime*gravit*gravit*Ke[i,k+1]*rho*rho/(pmid[i,k+1]-pmid[i,k])
-            CC[i,k+1] = rpdel[i,k+1]*dtime*gravit*gravit*Ke[i,k+1]*rho*rho/(pmid[i,k+1]-pmid[i,k])
+            CA[i,k]    = rpdel[i,k]*dtime*gravit*gravit*Ke[i,k+1]*rho*rho/(pmid[i,k+1]-pmid[i,k])
+            CC[i,k+1]  = rpdel[i,k+1]*dtime*gravit*gravit*Ke[i,k+1]*rho*rho/(pmid[i,k+1]-pmid[i,k])
          end
       end
       for i in 1:pcols
-         CAm[i,pver] = 0.0
-         CCm[i,1] = 0.0
+         CAm[i,pver]   = 0.0
+         CCm[i,1]      = 0.0
          CEm[i,pver+1] = 0.0
-         CA[i,pver] = 0.0
-         CC[i,1] = 0.0
-         CE[i,pver+1] = 0.0
+         CA[i,pver]    = 0.0
+         CC[i,1]       = 0.0
+         CE[i,pver+1]  = 0.0
          CFu[i,pver+1] = 0.0
-         CFv[i,pver+1] = 0.0
          CFt[i,pver+1] = 0.0
          CFq[i,pver+1] = 0.0 
       end
       for i in 1:pcols
          for k in pver:-1:1
-            CE[i,k] = CC[i,k]/(1.0+CA[i,k]+CC[i,k]-CA[i,k]*CE[i,k+1]) 
+            CE[i,k]  = CC[i,k]/(1.0+CA[i,k]+CC[i,k]-CA[i,k]*CE[i,k+1]) 
             CEm[i,k] = CCm[i,k]/(1.0+CAm[i,k]+CCm[i,k]-CAm[i,k]*CEm[i,k+1])
             CFu[i,k] = (u[i,k]+CAm[i,k]*CFu[i,k+1])/(1.0+CAm[i,k]+CCm[i,k]-CAm[i,k]*CEm[i,k+1])
-            CFv[i,k] = (v[i,k]+CAm[i,k]*CFv[i,k+1])/(1.0+CAm[i,k]+CCm[i,k]-CAm[i,k]*CEm[i,k+1])
             CFt[i,k] = ((p0/pmid[i,k])^(rair/cpair)*t[i,k]+CA[i,k]*CFt[i,k+1])/(1.0+CA[i,k]+CC[i,k]-CA[i,k]*CE[i,k+1]) 
             CFq[i,k] = (q[i,k]+CA[i,k]*CFq[i,k+1])/(1.0+CA[i,k]+CC[i,k]-CA[i,k]*CE[i,k+1])
        end
@@ -508,26 +551,22 @@ function simple_physics!(pcols::Int,
 # First we need to calculate the tendencies at the top model level
 #
       for i in 1:pcols
-            dudt[i,1]  = dudt[i,1]+(CFu[i,1]-u[i,1])/dtime
-            dvdt[i,1]  = dvdt[i,1]+(CFv[i,1]-v[i,1])/dtime
+            dudt[i,1] = dudt[i,1]+(CFu[i,1]-u[i,1])/dtime
             u[i,1]    = CFu[i,1]
-            v[i,1]    = CFv[i,1]
-            dtdt[i,1]  = dtdt[i,1]+(CFt[i,1]*(pmid[i,1]/p0)^(rair/cpair)-t[i,1])/dtime
+            dtdt[i,1] = dtdt[i,1]+(CFt[i,1]*(pmid[i,1]/p0)^(rair/cpair)-t[i,1])/dtime
             t[i,1]    = CFt[i,1]*(pmid[i,1]/p0)^(rair/cpair)
-            dqdt[i,1]  = dqdt[i,1]+(CFq[i,1]-q[i,1])/dtime
-            q[i,1]  = CFq[i,1]
+            dqdt[i,1] = dqdt[i,1]+(CFq[i,1]-q[i,1])/dtime
+            q[i,1]    = CFq[i,1]
       end
 
       for i in 1:pcols
          for k in 2:pver
-            dudt[i,k]  = dudt[i,k]+(CEm[i,k]*u[i,k-1]+CFu[i,k]-u[i,k])/dtime
-            dvdt[i,k]  = dvdt[i,k]+(CEm[i,k]*v[i,k-1]+CFv[i,k]-v[i,k])/dtime
+            dudt[i,k] = dudt[i,k]+(CEm[i,k]*u[i,k-1]+CFu[i,k]-u[i,k])/dtime
             u[i,k]    = CEm[i,k]*u[i,k-1]+CFu[i,k] 
-            v[i,k]    = CEm[i,k]*v[i,k-1]+CFv[i,k]
-            dtdt[i,k]  = dtdt[i,k]+((CE[i,k]*t[i,k-1]*(p0/pmid[i,k-1])^(rair/cpair)+CFt[i,k])*(pmid[i,k]/p0)^(rair/cpair)-t[i,k])/dtime 
+            dtdt[i,k] = dtdt[i,k]+((CE[i,k]*t[i,k-1]*(p0/pmid[i,k-1])^(rair/cpair)+CFt[i,k])*(pmid[i,k]/p0)^(rair/cpair)-t[i,k])/dtime 
             t[i,k]    = (CE[i,k]*t[i,k-1]*(p0/pmid[i,k-1])^(rair/cpair)+CFt[i,k])*(pmid[i,k]/p0)^(rair/cpair)
-            dqdt[i,k]  = dqdt[i,k]+(CE[i,k]*q[i,k-1]+CFq[i,k]-q[i,k])/dtime
-            q[i,k]  = CE[i,k]*q[i,k-1]+CFq[i,k]
+            dqdt[i,k] = dqdt[i,k]+(CE[i,k]*q[i,k-1]+CFq[i,k]-q[i,k])/dtime
+            q[i,k]    = CE[i,k]*q[i,k-1]+CFq[i,k]
          end
       end
 
@@ -539,5 +578,13 @@ function simple_physics!(pcols::Int,
 #-----------------------------------------------------------------------------
   #  call physics_dme_adjust(state, tend, qini, dtime)   ! This is for CESM/CAM
 
-   return
+   for k in 1:pver
+       for i in 1:pcols 
+           r = state[i,k,ID_DENS] + hy_dens_cell[k]
+           state[i,k,ID_UMOM] = u[i,pver-k+1] * r
+           state[i,k,ID_RHOT] = t[i,pver-k+1]*((P0/pmid[i,pver-k+1])^(RD/CP)) * r - hy_dens_theta_cell[k]
+           state[i,k,ID_SHUM] = q[i,pver-k+1] * r
+       end
+   end
+  
 end
