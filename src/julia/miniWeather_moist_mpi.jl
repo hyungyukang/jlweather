@@ -125,7 +125,7 @@ const P0          = Float64(1.0E5)  # Standard pressure at the surface in Pascal
 const C0          = Float64(27.5629410929725921310572974482)
 const GAMMA       = Float64(1.40027894002789400278940027894)
 const Q0          = Float64(0.01) # Background specific humidity
-const LRATE       = Float64(0.0015)
+const LRATE       = Float64(0.00001)
 
 const ID_DENS     = 1
 const ID_UMOM     = 2
@@ -296,9 +296,29 @@ function init!()
             state[i,k,ID_RHOT] = state[i,k,ID_RHOT] + ( (r+hr)*(t+ht) - hr*ht ) * qweights[ii]*qweights[kk]
           end
         end
+
+
+        #Compute the x,z location within the global domain based on cell and quadrature index
+#       x = (I_BEG-1 + i-0.5) * DX 
+#       z = (K_BEG-1 + k-0.5) * DZ 
+
+#       #Set the fluid state based on the user's specification
+#       if(DATA_SPEC==DATA_SPEC_COLLISION)      ; r,u,w,t,hr,ht = collision!(x,z)      ; end
+#       if(DATA_SPEC==DATA_SPEC_THERMAL)        ; r,u,w,t,hr,ht = thermal!(x,z)        ; end
+#       if(DATA_SPEC==DATA_SPEC_GRAVITY_WAVES)  ; r,u,w,t,hr,ht = gravity_waves!(x,z)  ; end
+#       if(DATA_SPEC==DATA_SPEC_DENSITY_CURRENT); r,u,w,t,hr,ht = density_current!(x,z); end
+#       if(DATA_SPEC==DATA_SPEC_INJECTION)      ; r,u,w,t,hr,ht = injection!(x,z)      ; end
+
+#       #Store into the fluid state array
+#       state[i,k,ID_DENS] = state[i,k,ID_DENS] + r                         
+#       state[i,k,ID_UMOM] = state[i,k,ID_UMOM] + (r+hr)*u                  
+#       state[i,k,ID_WMOM] = state[i,k,ID_WMOM] + (r+hr)*w                  
+#       state[i,k,ID_RHOT] = state[i,k,ID_RHOT] + ( (r+hr)*(t+ht) - hr*ht ) 
+
         for ll in 1:NUM_VARS
           statetmp[i,k,ll] = state[i,k,ll]
         end
+
       end
     end
 
@@ -423,7 +443,7 @@ function thermal!(x::Float64, z::Float64)
 
     #t = t + sample_ellipse_cosine!(x,z,3.0,XLEN/2,2000.0,2000.0,2000.0) 
 
-    #t = t + sample_ellipse_cosine!(x,z,3.0,XLEN/2,1000.0,500.0,500.0) 
+    t = t + sample_ellipse_cosine!(x,z,1.0,XLEN/2,100.0,100.0,100.0) 
 
     return r, u, w, t, hr, ht
 end
@@ -451,14 +471,11 @@ function hydro_const_theta!(z::Float64)
     r      = Float64(0.0) # Density
     t      = Float64(0.0) # Potential temperature
 
+    theta0 = Float64(300.0) + z * LRATE  # Background potential temperature
     #theta0 = Float64(300.0) # Background potential temperature
-
-    theta0 = Float64(290.0) # Background potential temperature
-
     exner0 = Float64(1.0)   # Surface-level Exner pressure
 
     t      = theta0                            # Potential temperature at z
-    #t      = theta0 + z * LRATE                # Potential temperature at z
 
     exner  = exner0 - GRAV * z / (CP * theta0) # Exner pressure at z
     p      = P0 * exner^(CP/RD)                # Pressure at z

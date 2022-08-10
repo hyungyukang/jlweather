@@ -114,7 +114,7 @@ function simple_physics!(pcols::Int,              # Set number of atmospheric co
 
 
                          test = 0
-                         RJ2012_precip = false
+                         RJ2012_precip = true
                          TC_PBL_mod = false
 #
 #---------------------------Local workspace-----------------------------
@@ -358,29 +358,37 @@ function simple_physics!(pcols::Int,              # Set number of atmospheric co
      #xrad = 500.0
      xrad = Float64(2000.0)
      amp = Float64(3.0)
-     Tsurf[:] .= SST_TC
+     #Tsurf[:] .= SST_TC
      for i in 1:pcols
-        for ii in 1:NQPOINTS
+         x = (I_BEG-1 + i-Float64(0.5)) * DX
+         val = amp * exp(-((x-x0)/xrad)^2)
+         Tsurf[i] = SST_TC + val
 
-           x = (I_BEG-1 + i-0.5) * DX + (qpoints[ii]-0.5)*DX
-           #dist = sqrt(((x-x0)/xrad)^2) * PI / Float64(2.0)
+#        for ii in 1:NQPOINTS
+#
+#           x = (I_BEG-1 + i-0.5) * DX + (qpoints[ii]-0.5)*DX
+#           #dist = sqrt(((x-x0)/xrad)^2) * PI / Float64(2.0)
+#           println(i,' ',x)
+#
+            #val = amp * exp(-((x-x0)/xrad)^2)
+            #Tsurf[i] = Tsurf[i] + val * qweights[ii]
+#
+##             #Tsurf[i] = SST_TC + val * qweights[ii]
+#
+##          if ( dist <= PI / Float64(2.0) )
+##             val = amp * cos(dist)^2
+##             #Tsurf[i] = SST_TC + val * qweights[ii]
+##             Tsurf[i] = Tsurf[i] + val * qweights[ii]
+##          else
+##             val = Float64(0.0)
+##             Tsurf[i] = Tsurf[i] + val * qweights[ii]
+##          end
+#
+#        end
 
-           val = amp * exp(-((x-x0)/xrad)^2)
-           Tsurf[i] = Tsurf[i] + val * qweights[ii]
 
-#             #Tsurf[i] = SST_TC + val * qweights[ii]
-
-#          if ( dist <= PI / Float64(2.0) )
-#             val = amp * cos(dist)^2
-#             #Tsurf[i] = SST_TC + val * qweights[ii]
-#             Tsurf[i] = Tsurf[i] + val * qweights[ii]
-#          else
-#             val = Float64(0.0)
-#             Tsurf[i] = Tsurf[i] + val * qweights[ii]
-#          end
-
-        end
 #     println(i,' ',Tsurf[i],' ',t[i,pver])
+#     println(i,' ',x)
      end
     
 #    Tsurf[:] .= SST_TC
@@ -453,33 +461,41 @@ function simple_physics!(pcols::Int,              # Set number of atmospheric co
 # Compute magnitude of the wind and drag coeffcients for turbulence scheme
 #
      for i in 1:pcols
+        #wind[i] = sqrt((0.5*w[i,pver])^2)
         #wind[i] = sqrt(u[i,pver]^2)
-        wind[i] = sqrt(u[i,pver]^2+w[i,pver]^2)
+        wind[i] = sqrt(u[i,pver]^2+0.5*w[i,pver]^2)
+        #wind[i] = sqrt(w[i,pver]^2)
+        #wind[i] = 1.0
      end
      for i in 1:pcols
-        if( wind[i] < v20)
+         if( wind[i] < v20)
            Cd[i] = Cd0+Cd1*wind[i] 
-        else
-           Cd[i] = Cm
-        end
+         else
+            Cd[i] = Cm
+         end
      end
 
-     if (TC_PBL_mod) #Bryan TC PBL Modification 
-     for k in pver:-1:1
-        for i in 1:pcols
-           dlnpint = log(pint[i,k+1]) - log(pint[i,k])
-           zi[i,k] = zi[i,k+1]+rair/gravit*t[i,k]*(1.0+zvir*q[i,k])*dlnpint
-           za[i]   = rair/gravit*t[i,pver]*(1.0+zvir*q[i,pver])*0.50*dlnpint
-           if( zi[i,k] <= zpbltop)
-              Km[i,k] = kappa*sqrt(Cd[i])*wind[i]*zi[i,k]*(1.0-zi[i,k]/zpbltop)*(1.0-zi[i,k]/zpbltop)
-              Ke[i,k] = kappa*sqrt(C)*wind[i]*zi[i,k]*(1.0-zi[i,k]/zpbltop)*(1.0-zi[i,k]/zpbltop) 
-           else
-              Km[i,k] = 0.00
-              Ke[i,k] = 0.00
-           end
-        end
-     end
-     else # Reed and Jablonowski (2012) Configuration
+#    if (TC_PBL_mod) #Bryan TC PBL Modification 
+#    for k in pver:-1:1
+#       for i in 1:pcols
+#          z = (K_BEG-1 + k-1) * DZ
+#          dlnpint = log(pint[i,k+1]) - log(pint[i,k])
+#          zi[i,k] = zi[i,k+1]+rair/gravit*t[i,k]*(1.0+zvir*q[i,k])*dlnpint
+#          za[i]   = rair/gravit*t[i,pver]*(1.0+zvir*q[i,pver])*0.50*dlnpint
+#          #zi[i,k] = z
+#          #za[i]   = ZLEN
+#          if( zi[i,k] <= zpbltop)
+#             Km[i,k] = kappa*sqrt(Cd[i])*wind[i]*zi[i,k]*(1.0-zi[i,k]/zpbltop)*(1.0-zi[i,k]/zpbltop)
+#             Ke[i,k] = kappa*sqrt(C)*wind[i]*zi[i,k]*(1.0-zi[i,k]/zpbltop)*(1.0-zi[i,k]/zpbltop) 
+#          else
+#             Km[i,k] = 0.00
+#             Ke[i,k] = 0.00
+#          end
+#       end
+#    end
+
+#    else # Reed and Jablonowski (2012) Configuration
+
      for k in 1:pver
         for i in 1:pcols
            if( pint[i,k] >= pbltop)
@@ -491,7 +507,7 @@ function simple_physics!(pcols::Int,              # Set number of atmospheric co
            end
         end
      end
-     end
+#    end
 #-----------------------------------------------------------------------------
 # Update the state variables u, v, t, q with the surface fluxes at the
 # lowest model level, this is done with an implicit approach
@@ -526,15 +542,15 @@ function simple_physics!(pcols::Int,              # Set number of atmospheric co
          end
       end
       for i in 1:pcols
-         CAm[i,pver]   = 0.0
-         CCm[i,1]      = 0.0
-         CEm[i,pver+1] = 0.0
-         CA[i,pver]    = 0.0
-         CC[i,1]       = 0.0
-         CE[i,pver+1]  = 0.0
-         CFu[i,pver+1] = 0.0
-         CFt[i,pver+1] = 0.0
-         CFq[i,pver+1] = 0.0 
+         CAm[i,pver]   = Float64(0.0)
+         CCm[i,1]      = Float64(0.0)
+         CEm[i,pver+1] = Float64(0.0)
+         CA[i,pver]    = Float64(0.0)
+         CC[i,1]       = Float64(0.0)
+         CE[i,pver+1]  = Float64(0.0)
+         CFu[i,pver+1] = Float64(0.0)
+         CFt[i,pver+1] = Float64(0.0)
+         CFq[i,pver+1] = Float64(0.0)
       end
       for i in 1:pcols
          for k in pver:-1:1
