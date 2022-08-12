@@ -23,11 +23,11 @@ extent=[0,XLEN/1000.0,0,ZLEN/1000.0]
 ds = Dataset(file_name,"r")
 
 ds_t = ds["t"]
-ds_dens = ds["dens"]
-ds_uwnd = ds["uwnd"]
-ds_wwnd = ds["wwnd"]
-ds_theta = ds["theta"]
-ds_shum = ds["shumid"]
+ds_dens =    ds["dens_aft"]
+ds_uwnd =    ds["uwnd_aft"]
+ds_wwnd =    ds["wwnd_aft"]
+ds_theta =  ds["theta_aft"]
+ds_shum =  ds["shumid_aft"]
 
 nt = ds.dim["t"]
 nx = ds.dim["x"]

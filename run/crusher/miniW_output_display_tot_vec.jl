@@ -63,7 +63,7 @@ qvmax=0.005
 qvmin=0.0
 
 # Time loop
-for n in 1:nt
+for n in nt-1:nt
     println("Processing time: ",n," / ",nt)
  
     time = ds_t[n]
@@ -89,41 +89,46 @@ for n in 1:nt
     ctime = @sprintf("%6.1f",time)
 
     # Display
-    fig = figure("out",figsize=(13,5.5))
+    fig = figure("out",figsize=(13,8.0))
     subplots_adjust(hspace=0.1)
     suptitle(string("Julia Miniweather
             \nnx=",nx,"; nz=",nz,"; Time=",ctime," s"))
-    subplot(231)
+    subplot(331)
        xlabel("X (km)")
        ylabel("Z (km)")
        title("Potential temperature")
        imshow(transpose(reverse(rhot_d,dims=2)),extent=extent,cmap="jet",vmin=pvmin,vmax=pvmax)
-    subplot(232)
+    subplot(332)
        xlabel("X (km)")
        ylabel("Z (km)")
        title("Potential temperature")
        imshow(transpose(reverse(rhot_m_np,dims=2)),extent=extent,cmap="jet",vmin=pvmin,vmax=pvmax)
-    subplot(233)
+    subplot(333)
        xlabel("X (km)")
        ylabel("Z (km)")
        title("Potential temperature")
        imshow(transpose(reverse(rhot_m_p,dims=2)),extent=extent,cmap="jet",vmin=pvmin,vmax=pvmax)
-    subplot(234)
+    subplot(334)
        xlabel("X (km)")
        ylabel("Z (km)")
        title("Specific humidity")
        imshow(transpose(reverse(rhot_d*0,dims=2)),extent=extent,cmap="jet",vmin=qvmin,vmax=qvmax)
        text(0.5,0.5,"Const.=0",color="white")
-    subplot(235)
+    subplot(335)
        xlabel("X (km)")
        ylabel("Z (km)")
        title("Specific humidity")
        imshow(transpose(reverse(shum_m_np,dims=2)),extent=extent,cmap="jet",vmin=qvmin,vmax=qvmax)
-    subplot(236)
+    subplot(336)
        xlabel("X (km)")
        ylabel("Z (km)")
        title("Specific humidity")
        imshow(transpose(reverse(shum_m_p,dims=2)),extent=extent,cmap="jet",vmin=qvmin,vmax=qvmax)
+    subplot(337)
+       xlabel("X (km)")
+       ylabel("Z (km)")
+       title("Specific humidity")
+       quiver((transpose(reverse(uwnd_m_p,dims=2))),(transpose(reverse(wwnd_m_p,dims=2))))
 
     fig_name = string(fig_dir_name,"/fig_",it,".png")
     savefig(fig_name,bbox_inches="tight",dpi=120)

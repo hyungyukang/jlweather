@@ -32,7 +32,9 @@ import Printf.@printf
 
 import Libdl
 
-include("simple_phys_xz.jl")
+import Flux
+
+include("simple_phys_xz_ml.jl")
 
 ##############
 # constants
@@ -125,7 +127,7 @@ const P0          = Float64(1.0E5)  # Standard pressure at the surface in Pascal
 const C0          = Float64(27.5629410929725921310572974482)
 const GAMMA       = Float64(1.40027894002789400278940027894)
 const Q0          = Float64(0.01) # Background specific humidity
-const LRATE       = Float64(0.00001)
+const LRATE       = Float64(0.00100)
 
 const ID_DENS     = 1
 const ID_UMOM     = 2
@@ -171,7 +173,7 @@ function main(args::Vector{String})
     local nt = Int(1)
 
     #Initialize the grid and the data  
-    (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
+    (state, statetmp, statein, flux, tend, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
             sendbuf_r, recvbuf_l, recvbuf_r) = init!()
 
@@ -179,7 +181,7 @@ function main(args::Vector{String})
     local mass0, te0 = reductions(state, hy_dens_cell, hy_dens_theta_cell)
 
     #Output the initial state
-    output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
+    output(state,statein,etime,nt,hy_dens_cell,hy_dens_theta_cell)
 
     
     # main loop
@@ -205,7 +207,7 @@ function main(args::Vector{String})
         #Set the halo values for this MPI task's fluid state in the z-direction
         #set_halo_values_z!(state, hy_dens_cell, hy_dens_theta_cell)
 
-        simple_physics!(NX,NZ,dt,state,hy_dens_cell,hy_dens_theta_cell,
+        simple_physics!(NX,NZ,dt,state,statein,hy_dens_cell,hy_dens_theta_cell,
                         hy_dens_int,hy_dens_theta_int,hy_pressure_int)
 
         #println(maximum(state[:,:,ID_UMOM]),' ',maximum(state[:,:,ID_WMOM]))
@@ -218,7 +220,7 @@ function main(args::Vector{String})
         if (output_counter >= OUT_FREQ)
           #Increment the number of outputs
           nt = nt + 1
-          output(state,etime,nt,hy_dens_cell,hy_dens_theta_cell)
+          output(state,statein,etime,nt,hy_dens_cell,hy_dens_theta_cell)
           output_counter = output_counter - OUT_FREQ
         end
 
@@ -250,6 +252,8 @@ function init!()
     state       = OffsetArray(_state, 1-HS:NX+HS, 1-HS:NZ+HS, 1:NUM_VARS)
     _statetmp   = Array{Float64}(undef, NX+2*HS, NZ+2*HS, NUM_VARS) 
     statetmp    = OffsetArray(_statetmp, 1-HS:NX+HS, 1-HS:NZ+HS, 1:NUM_VARS)
+    _statein    = Array{Float64}(undef, NX+2*HS, NZ+2*HS, NUM_VARS) 
+    statein     = OffsetArray(_statein , 1-HS:NX+HS, 1-HS:NZ+HS, 1:NUM_VARS)
     
     flux        = zeros(Float64, NX+1, NZ+1, NUM_VARS) 
     tend        = zeros(Float64, NX, NZ, NUM_VARS) 
@@ -381,7 +385,7 @@ function init!()
         hy_pressure_int[k] = C0*(hr*ht)^GAMMA
     end
 
-    return (state, statetmp, flux, tend, hy_dens_cell, hy_dens_theta_cell,
+    return (state, statetmp,statein, flux, tend, hy_dens_cell, hy_dens_theta_cell,
             hy_dens_int, hy_dens_theta_int, hy_pressure_int, sendbuf_l,
             sendbuf_r, recvbuf_l, recvbuf_r)
 end
@@ -443,6 +447,8 @@ function thermal!(x::Float64, z::Float64)
 
     #t = t + sample_ellipse_cosine!(x,z,3.0,XLEN/2,2000.0,2000.0,2000.0) 
 
+    #t = t + sample_ellipse_cosine!(x,z,1.0,XLEN/2,100.0,100.0,100.0) 
+
     t = t + sample_ellipse_cosine!(x,z,1.0,XLEN/2,100.0,100.0,100.0) 
 
     return r, u, w, t, hr, ht
@@ -471,7 +477,8 @@ function hydro_const_theta!(z::Float64)
     r      = Float64(0.0) # Density
     t      = Float64(0.0) # Potential temperature
 
-    theta0 = Float64(300.0) + z * LRATE  # Background potential temperature
+    #theta0 = Float64(300.0) + z * LRATE  # Background potential temperature
+    theta0 = Float64(280.0) + z * LRATE  # Background potential temperature
     #theta0 = Float64(300.0) # Background potential temperature
     exner0 = Float64(1.0)   # Surface-level Exner pressure
 
@@ -949,15 +956,16 @@ end
 
 #Output the fluid state (state) to a NetCDF file at a given elapsed model time (etime)
 function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
+                statein::OffsetArray{Float64, 3, Array{Float64, 3}},
                 etime::Float64,
                 nt::Int,
                 hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                 hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}})
 
-    var_local  = zeros(Float64, NX, NZ, NUM_VARS)
+    var_local  = zeros(Float64, NX, NZ, NUM_VARS*2)
 
     if MASTERPROC
-       var_global  = zeros(Float64, NX_GLOB, NZ_GLOB, NUM_VARS)
+       var_global  = zeros(Float64, NX_GLOB, NZ_GLOB, NUM_VARS*2)
     end
 
     #Store perturbed values in the temp arrays for output
@@ -967,9 +975,13 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
             var_local[i,k,ID_UMOM]  = state[i,k,ID_UMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
             var_local[i,k,ID_WMOM]  = state[i,k,ID_WMOM] / ( hy_dens_cell[k] + state[i,k,ID_DENS] )
             var_local[i,k,ID_RHOT] = ( state[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / ( hy_dens_cell[k] + state[i,k,ID_DENS] ) - hy_dens_theta_cell[k] / hy_dens_cell[k]
-            #var_local[i,k,ID_SHUM]  = (state[i,k,ID_SHUM] + Q0) / (hy_dens_cell[k] + state[i,k,ID_DENS])
-            #var_local[i,k,ID_SHUM]  = (state[i,k,ID_SHUM] + Q0 * hy_dens_cell[k]) / (hy_dens_cell[k] + state[i,k,ID_DENS])
             var_local[i,k,ID_SHUM]  = (state[i,k,ID_SHUM]) / (hy_dens_cell[k] + state[i,k,ID_DENS])
+
+            var_local[i,k,ID_DENS+5]  = statein[i,k,ID_DENS]
+            var_local[i,k,ID_UMOM+5]  = statein[i,k,ID_UMOM] / ( hy_dens_cell[k] + statein[i,k,ID_DENS] )
+            var_local[i,k,ID_WMOM+5]  = statein[i,k,ID_WMOM] / ( hy_dens_cell[k] + statein[i,k,ID_DENS] )
+            var_local[i,k,ID_RHOT+5] = ( statein[i,k,ID_RHOT] + hy_dens_theta_cell[k] ) / ( hy_dens_cell[k] + statein[i,k,ID_DENS] ) - hy_dens_theta_cell[k] / hy_dens_cell[k]
+            var_local[i,k,ID_SHUM+5]  = (statein[i,k,ID_SHUM]) / (hy_dens_cell[k] + statein[i,k,ID_DENS])
         end
     end
 
@@ -991,7 +1003,7 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
        var_global[I_BEG:I_END,:,:] = var_local[:,:,:]
        if NRANKS > 1
           for i in 2:NRANKS
-              var_local = Array{Float64}(undef, nchunk[i],NZ,NUM_VARS)
+              var_local = Array{Float64}(undef, nchunk[i],NZ,NUM_VARS*2)
               status = Recv!(var_local,i-1,0,COMM)
               var_global[ibeg_chunk[i]:iend_chunk[i],:,:] = var_local[:,:,:]
           end
@@ -1015,16 +1027,28 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
 
           nc_var = defVar(ds,"t",Float64,("t",))
           nc_var[nt] = etime
-          nc_var = defVar(ds,"dens",Float64,("x","z","t"))
+          nc_var = defVar(ds,"dens_aft",Float64,("x","z","t"))
           nc_var[:,:,nt] = var_global[:,:,ID_DENS]
-          nc_var = defVar(ds,"uwnd",Float64,("x","z","t"))
+          nc_var = defVar(ds,"uwnd_aft",Float64,("x","z","t"))
           nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
-          nc_var = defVar(ds,"wwnd",Float64,("x","z","t"))
+          nc_var = defVar(ds,"wwnd_aft",Float64,("x","z","t"))
           nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
-          nc_var = defVar(ds,"theta",Float64,("x","z","t"))
+          nc_var = defVar(ds,"theta_aft",Float64,("x","z","t"))
           nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
-          nc_var = defVar(ds,"shumid",Float64,("x","z","t"))
+          nc_var = defVar(ds,"shumid_aft",Float64,("x","z","t"))
           nc_var[:,:,nt] = var_global[:,:,ID_SHUM]
+
+          nc_var = defVar(ds,"dens_bef",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_DENS+5]
+          nc_var = defVar(ds,"uwnd_bef",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_UMOM+5]
+          nc_var = defVar(ds,"wwnd_bef",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_WMOM+5]
+          nc_var = defVar(ds,"theta_bef",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_RHOT+5]
+          nc_var = defVar(ds,"shumid_bef",Float64,("x","z","t"))
+          nc_var[:,:,nt] = var_global[:,:,ID_SHUM+5]
+
 
           # Close NetCDF file
           close(ds)
@@ -1036,16 +1060,27 @@ function output(state::OffsetArray{Float64, 3, Array{Float64, 3}},
 
           nc_var = ds["t"]
           nc_var[nt] = etime
-          nc_var = ds["dens"]
+          nc_var = ds["dens_aft"]
           nc_var[:,:,nt] = var_global[:,:,ID_DENS]
-          nc_var = ds["uwnd"]
+          nc_var = ds["uwnd_aft"]
           nc_var[:,:,nt] = var_global[:,:,ID_UMOM]
-          nc_var = ds["wwnd"]
+          nc_var = ds["wwnd_aft"]
           nc_var[:,:,nt] = var_global[:,:,ID_WMOM]
-          nc_var = ds["theta"]
+          nc_var = ds["theta_aft"]
           nc_var[:,:,nt] = var_global[:,:,ID_RHOT]
-          nc_var = ds["shumid"]
+          nc_var = ds["shumid_aft"]
           nc_var[:,:,nt] = var_global[:,:,ID_SHUM]
+
+          nc_var = ds["dens_bef"]
+          nc_var[:,:,nt] = var_global[:,:,ID_DENS+5]
+          nc_var = ds["uwnd_bef"]
+          nc_var[:,:,nt] = var_global[:,:,ID_UMOM+5]
+          nc_var = ds["wwnd_bef"]
+          nc_var[:,:,nt] = var_global[:,:,ID_WMOM+5]
+          nc_var = ds["theta_bef"]
+          nc_var[:,:,nt] = var_global[:,:,ID_RHOT+5]
+          nc_var = ds["shumid_bef"]
+          nc_var[:,:,nt] = var_global[:,:,ID_SHUM+5]
 
           # Close NetCDF file
           close(ds)

@@ -3,8 +3,8 @@
 SIM_TIME := 10000.0
 OUT_FREQ := 50.0
 #SIM_TIME := 100.0
-NX :=  200
-NZ :=  100
+NX :=  300
+NZ :=  150
 #SIM_TIME := 10.0 #10.0
 #OUT_FREQ := 10.0 # 10.0
 #NX := 6400 # 640 

@@ -122,7 +122,7 @@ const RD          = Float64(287.0)  # Dry air constant for equation of state (P=
 const P0          = Float64(1.0E5)  # Standard pressure at the surface in Pascals
 const C0          = Float64(27.5629410929725921310572974482)
 const GAMMA       = Float64(1.40027894002789400278940027894)
-const LRATE       = Float64(0.00001)
+const LRATE       = Float64(0.00100)
 
 const ID_DENS     = 1
 const ID_UMOM     = 2
@@ -372,6 +372,7 @@ function thermal!(x::Float64, z::Float64)
     w  = Float64(0.0) # Wwind
     
 #    t = t + sample_ellipse_cosine!(x,z,3.0,XLEN/2,2000.0,2000.0,2000.0) 
+
     t = t + sample_ellipse_cosine!(x,z,1.0,XLEN/2,100.0,100.0,100.0)
 
     return r, u, w, t, hr, ht
@@ -401,7 +402,7 @@ function hydro_const_theta!(z::Float64)
     t      = Float64(0.0) # Potential temperature
 
     #theta0 = Float64(300.0) # Background potential temperature
-    theta0 = Float64(300.0) + z * LRATE  # Background potential temperature
+    theta0 = Float64(280.0) + z * LRATE  # Background potential temperature
     exner0 = Float64(1.0)   # Surface-level Exner pressure
 
     t      = theta0                            # Potential temperature at z
