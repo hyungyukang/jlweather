@@ -33,8 +33,12 @@ import Printf.@printf
 import Libdl
 
 import Flux
+using BSON: @load
+using BSON: @save
 
 include("simple_phys_xz_ml.jl")
+
+@load "mymodel.bson" model
 
 ##############
 # constants

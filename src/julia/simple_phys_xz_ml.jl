@@ -92,7 +92,6 @@ function simple_physics!(pcols::Int,              # Set number of atmospheric co
                          pver::Int,               # Set number of model levels
                          dtime::Float64,          # Set model physics timestep
                          state::OffsetArray{Float64, 3, Array{Float64, 3}},     # State
-                         statein::OffsetArray{Float64, 3, Array{Float64, 3}},     # State
                          hy_dens_cell::OffsetVector{Float64, Vector{Float64}},
                          hy_dens_theta_cell::OffsetVector{Float64, Vector{Float64}},
                          hy_dens_int::Vector{Float64},
@@ -215,11 +214,6 @@ function simple_physics!(pcols::Int,              # Set number of atmospheric co
            q[i,pver-k+1]    =  state[i,k,ID_SHUM] / r
            pmid[i,pver-k+1] = C0*(r*tt*(1+0.61*q[i,pver-k+1]))^GAMMA
            t[i,pver-k+1]    = tt * (P0/pmid[i,pver-k+1])^(-(RD/CP))
-           statein[i,k,ID_DENS] = state[i,k,ID_DENS]
-           statein[i,k,ID_RHOT] = state[i,k,ID_RHOT]
-           statein[i,k,ID_UMOM] = state[i,k,ID_UMOM]
-           statein[i,k,ID_WMOM] = state[i,k,ID_WMOM]
-           statein[i,k,ID_SHUM] = state[i,k,ID_SHUM]
        end
    end 
 
