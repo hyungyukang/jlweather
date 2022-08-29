@@ -32,13 +32,15 @@ import Printf.@printf
 
 import Libdl
 
-import Flux
+using Flux
 using BSON: @load
-using BSON: @save
 
 include("simple_phys_xz_ml.jl")
 
-@load "mymodel.bson" model
+@load "mymodel_u.bson" model_u
+@load "mymodel_w.bson" model_w
+@load "mymodel_t.bson" model_t
+@load "mymodel_q.bson" model_q
 
 ##############
 # constants
@@ -187,6 +189,21 @@ function main(args::Vector{String})
     #Output the initial state
     output(state,statein,etime,nt,hy_dens_cell,hy_dens_theta_cell)
 
+
+#   xdata = Array{Tuple{Float64,Float64,Float64,Float64},1}(undef,1)
+#   ydata = Array{Tuple{Float64,Float64,Float64,Float64},1}(undef,1)
+
+    xdata_u = Array{NTuple{NZ,Float64}}(undef,1)
+    ydata_u = Array{NTuple{NZ,Float64}}(undef,1)
+    xdata_w = Array{NTuple{NZ,Float64}}(undef,1)
+    ydata_w = Array{NTuple{NZ,Float64}}(undef,1)
+    xdata_t = Array{NTuple{NZ,Float64}}(undef,1)
+    ydata_t = Array{NTuple{NZ,Float64}}(undef,1)
+    xdata_q = Array{NTuple{NZ,Float64}}(undef,1)
+    ydata_q = Array{NTuple{NZ,Float64}}(undef,1)
+
+    x_vec = zeros(Float64,4)
+    y_vec = zeros(Float64,4)
     
     # main loop
     elapsedtime = @elapsed while etime < SIM_TIME
@@ -211,18 +228,108 @@ function main(args::Vector{String})
         #Set the halo values for this MPI task's fluid state in the z-direction
         #set_halo_values_z!(state, hy_dens_cell, hy_dens_theta_cell)
 
-        for k in 1-HS:NZ+HS
-          for i in 1-HS:NX+HS
-              statein[i,k,ID_DENS] = state[i,k,ID_DENS]
-              statein[i,k,ID_UMOM] = state[i,k,ID_UMOM]
-              statein[i,k,ID_WMOM] = state[i,k,ID_WMOM]
-              statein[i,k,ID_RHOT] = state[i,k,ID_RHOT]
-              statein[i,k,ID_SHUM] = state[i,k,ID_SHUM]
-          end
+#       qscl = 1000.0
+#       wscl = 5.0
+#       dev = -5.0
+#       scl = 10.0
+
+        uscl = 10.0
+        wscl = 10.0
+        tscl = 10.0
+        qscl = 0.001
+
+        for i in 1-HS:NX+HS
+              statein[i,:,ID_DENS] =  state[i,:,ID_DENS] 
+              statein[i,:,ID_UMOM] =  state[i,:,ID_UMOM] / uscl
+              statein[i,:,ID_WMOM] =  state[i,:,ID_WMOM] / wscl
+              statein[i,:,ID_RHOT] =  state[i,:,ID_RHOT] / tscl
+              statein[i,:,ID_SHUM] =  state[i,:,ID_SHUM] / qscl
+
+              xdata_u = tuple(statein[i,1:NZ,ID_UMOM]...)
+              xdata_w = tuple(statein[i,1:NZ,ID_WMOM]...)
+              xdata_t = tuple(statein[i,1:NZ,ID_RHOT]...)
+              xdata_q = tuple(statein[i,1:NZ,ID_SHUM]...)
+
+              if ( i == Int(NX/2))
+                 println("   ")
+                 println("   ")
+                 println("   ")
+                 println(log10(xdata_u[1])," ",log10(xdata_u[NZ]))
+              end
+
+              ydata_u = model_u(collect(xdata_u))
+              ydata_w = model_w(collect(xdata_w))
+              ydata_t = model_t(collect(xdata_t))
+              ydata_q = model_q(collect(xdata_q))
+
+              statein[i,1:NZ,ID_UMOM] = ydata_u * uscl
+              statein[i,1:NZ,ID_WMOM] = ydata_w * wscl
+              statein[i,1:NZ,ID_RHOT] = ydata_t * tscl
+              statein[i,1:NZ,ID_SHUM] = ydata_q * qscl
+
+              #println(statein[i,1:NZ,ID_UMOM])
+              #println(statein[i,1:NZ,ID_WMOM])
+              #println(statein[i,1:NZ,ID_RHOT])
+              #println(statein[i,1:NZ,ID_SHUM])
         end
 
         simple_physics!(NX,NZ,dt,state,hy_dens_cell,hy_dens_theta_cell,
                         hy_dens_int,hy_dens_theta_int,hy_pressure_int)
+
+#       for k in 1:NZ
+#         for i in 1:2
+#             println(statein[i,k,ID_UMOM]," ",state[i,k,ID_UMOM],"  ",statein[i,k,ID_RHOT]," ",state[i,k,ID_RHOT])
+#             #println(statein[i,k,ID_WMOM]," ",state[i,k,ID_WMOM],"  ",statein[i,k,ID_SHUM]," ",state[i,k,ID_SHUM])
+#         end
+#       end
+#       quit
+
+        for k in 1-HS:NZ+HS
+          for i in 1-HS:NX+HS
+#             statein[i,k,ID_DENS] =   (state[i,k,ID_DENS])   
+#             statein[i,k,ID_UMOM] = ( (state[i,k,ID_UMOM])        -dev) / scl
+#             statein[i,k,ID_WMOM] = ( (state[i,k,ID_WMOM] * wscl) -dev) / scl
+#             statein[i,k,ID_RHOT] = ( (state[i,k,ID_RHOT]       ) -dev) / scl
+#             statein[i,k,ID_SHUM] = ( (state[i,k,ID_SHUM] * qscl) -dev) / scl
+
+              #xdata = (statein[i,k,ID_UMOM],statein[i,k,ID_WMOM],statein[i,k,ID_RHOT],statein[i,k,ID_SHUM])
+              #ydata = model(collect(xdata))
+
+#             if statein[i,k,ID_SHUM] < 0.0
+#                statein[i,k,ID_SHUM] = 1.e-12
+#             end
+
+#             if state[i,k,ID_UMOM] == 0.0
+#                statein[i,k,ID_UMOM] = 0.0 
+#             end
+#             if state[i,k,ID_WMOM] == 0.0
+#                statein[i,k,ID_WMOM] = 0.0 
+#             end
+#             if state[i,k,ID_RHOT] == 0.0
+#                statein[i,k,ID_RHOT] = 0.0 
+#             end
+#             #println(statein[i,k,ID_UMOM]," ",statein[i,k,ID_UMOM],"    ",statein[i,k,ID_WMOM]," ",statein[i,k,ID_WMOM])
+
+#             state[i,k,ID_UMOM] = statein[i,k,ID_UMOM]
+#             state[i,k,ID_WMOM] = statein[i,k,ID_WMOM]
+#             state[i,k,ID_RHOT] = statein[i,k,ID_RHOT]
+#             state[i,k,ID_SHUM] = statein[i,k,ID_SHUM]
+          end
+        end
+
+
+#       simple_physics!(NX,NZ,dt,state,hy_dens_cell,hy_dens_theta_cell,
+#                       hy_dens_int,hy_dens_theta_int,hy_pressure_int)
+
+
+#       for k in 1-HS:NZ+HS
+#         for i in 1-HS:NX+HS
+#             #println(statein[i,k,ID_UMOM]," ",state[i,k,ID_UMOM],"    ",statein[i,k,ID_WMOM]," ",state[i,k,ID_WMOM])
+#             println(statein[i,k,ID_RHOT]," ",state[i,k,ID_RHOT],"    ",statein[i,k,ID_SHUM]," ",state[i,k,ID_SHUM])
+#         end
+#       end
+
+#       quit
 
         #println(sum(state[:,:,:]-statein[:,:,:]))
         #println(maximum(state[:,:,ID_UMOM]),' ',maximum(state[:,:,ID_WMOM]))
